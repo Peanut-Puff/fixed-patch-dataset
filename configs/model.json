@@ -1,0 +1,6 @@
+{
+  "name": "DeepSeek-V4.1-Flash-1017",
+  "context_window": 300000,
+  "max_output_tokens": 65536,
+  "reasoning_effort": "high"
+}

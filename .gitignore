@@ -1,0 +1,16 @@
+__pycache__/
+*.py[cod]
+.DS_Store
+.venv/
+.local/
+.state/
+results*/
+runs/
+bin/
+binaries/
+*.tar
+*.tar.gz
+*.zip
+.env
+upstream.json
+*.private.json

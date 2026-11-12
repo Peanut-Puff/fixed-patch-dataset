@@ -1,0 +1,4 @@
+{
+  "base_url": "http://YOUR-MODEL-HOST:8080/v1",
+  "api_key": "REPLACE_AT_RUNTIME"
+}

