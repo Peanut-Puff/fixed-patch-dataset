@@ -108,6 +108,8 @@ def parser():
         t = tasks.add_parser(name); t.add_argument('--task-root', type=Path, default=REPO / 'tasks')
     t = tasks.add_parser('seal', help='Record hashes after an intentional task edit')
     t.add_argument('directory', type=Path)
+    t = tasks.add_parser('sync-pier', help='Generate Pier inputs from task.json; seal separately after review')
+    t.add_argument('directory', type=Path)
     t = tasks.add_parser('import', help='Copy and seal a task directory into this repository')
     t.add_argument('directory', type=Path)
     t = tasks.add_parser('capture', help='Calculate candidate file hashes/C0 tree using the pinned image, without a model')
@@ -143,7 +145,12 @@ def main(argv=None):
             if args.task_command in ['list', 'check']:
                 tasks = discover(args.task_root)
                 for key, (task, directory) in tasks.items():
-                    print(key if args.task_command == 'list' else key + ': hashes OK')
+                    print(key if args.task_command == 'list' else key + ': hashes OK' +
+                          ('; Pier inputs OK' if 'pier' in task else ''))
+                return 0
+            if args.task_command == 'sync-pier':
+                from .pier_dataset import sync
+                print('Synchronized ' + str(sync(args.directory)) + ' Pier inputs; inspect and run tasks seal next')
                 return 0
             if args.task_command == 'seal':
                 print('Sealed ' + str(seal(args.directory)) + ' files')
@@ -177,6 +184,9 @@ def main(argv=None):
                         write_json(manifest, read_json(tmp / 'candidate-files.json'))
                         task['expected_initial_tree_sha256'] = read_json(tmp / 'initial-tree.json')['sha256']
                         write_json(directory / 'task.json', task)
+                        if 'pier' in task:
+                            from .pier_dataset import sync
+                            sync(directory)
                         seal(directory)
                         print('Captured and sealed ' + task['id'])
                     finally:

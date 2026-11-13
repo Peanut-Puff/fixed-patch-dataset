@@ -72,7 +72,22 @@ python3 experiment.py tasks check
 ```
 
 从仓库外导入已经准备的目录可用 `python3 experiment.py tasks import /path/to/my-case`；不会覆盖同名任务。
-刻意更改题面/tests/patch 后使用 `python3 experiment.py tasks seal tasks/my-case` 更新所有输入哈希。
+仅供实验运行器使用的任务，刻意更改输入后用 `python3 experiment.py tasks seal tasks/my-case` 更新哈希。
+启用 Pier 的任务（`task.json` 含 `pier.schema_version = 1`）必须先同步派生输入再 seal：
+
+```bash
+python3 experiment.py tasks sync-pier tasks/my-case
+python3 experiment.py tasks seal tasks/my-case
+python3 experiment.py tasks check
+```
+
+`sync-pier` 也可将新任务接入 Pier，要求隐藏测试目录名为 `tests`。
+`task.json` 中的 `pier.metadata` 保存语言、类别、原始任务来源等展示信息；`task.toml` 是生成物。
+权威输入仍为 `task.json` 引用的题面、候选 patch、文件清单和正对照。
+不要手改 `instruction.md`、`environment/`、`solution/` 或生成的 Dockerfile；生成规则和完整布局见
+[AEO 接入说明](aeo.md)。`tasks check` 和 `seal` 均拒绝派生副本漂移或构建上下文中的额外文件。
+`capture` 为已启用 Pier 的任务重新计算 C0 后，会先同步派生输入再封存。
+
 seal 只冻结事实，不证明正负对照可复现；正式运行仍会检验三个对照，失败则停止，不启动 Agent。
 
 任务集、suite、模型配置和资源值均在结果 plan 中保存；可执行文件按当次选择快照。

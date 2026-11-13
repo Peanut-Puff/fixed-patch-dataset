@@ -263,6 +263,7 @@ class Runner:
             shutil.copy2(safe_child(source, task[field]), inputs / filename)
         binary = binaries.verify(self.output / 'binaries' / agent)
         spec = {'task': task['id'], 'agent': agent, 'base_commit': task['base_commit'], 'model': self.plan['model'],
+                'expected_initial_tree_sha256': task['expected_initial_tree_sha256'],
                 'session_id': str(uuid.uuid4()), 'timeout_seconds': self.r['agent_timeout_seconds'],
                 'binary_filename': binary['filename'], 'binary_sha256': binary['sha256']}
         write_json(inputs / 'run.json', spec)

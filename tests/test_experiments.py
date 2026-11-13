@@ -44,7 +44,10 @@ class TaskTests(unittest.TestCase):
             task = root / 'new-task'
             shutil.copytree(REPO / 'tasks/koota-pair-relation-tracking', task)
             spec = read_json(task / 'task.json'); spec['id'] = 'new-task'
-            write_json(task / 'task.json', spec); catalog.seal(task)
+            write_json(task / 'task.json', spec)
+            from bfoc.pier_dataset import sync
+            sync(task)
+            catalog.seal(task)
             self.assertEqual(list(catalog.discover(root)), ['new-task'])
             (task / 'prompt.txt').write_text('changed')
             with self.assertRaisesRegex(ValueError, 'hash changed'):

@@ -1,5 +1,4 @@
 """Runs inside disposable task containers. Hidden tests are never mounted here."""
-import json
 import os
 from pathlib import Path
 import signal
@@ -8,56 +7,15 @@ import sys
 import time
 from bfoc.adapters import command, environment
 from bfoc.common import read_json, sha256, write_json
-
-
-def tree(app):
-    import hashlib
-    tracked = subprocess.check_output(['git', 'ls-files', '-z'], cwd=app).split(b'\0')
-    extra = subprocess.check_output(['git', 'ls-files', '--others', '--exclude-standard', '-z'], cwd=app).split(b'\0')
-    rows = []
-    for name in sorted(set(tracked + extra)):
-        if not name:
-            continue
-        relative = os.fsdecode(name)
-        p = app / relative
-        if p.is_symlink():
-            data, mode = os.readlink(p).encode(), '120000'
-        elif p.is_file():
-            data = p.read_bytes()
-            mode = '100755' if p.stat().st_mode & 0o111 else '100644'
-        else:
-            continue
-        rows.append({'path': relative, 'mode': mode, 'sha256': hashlib.sha256(data).hexdigest()})
-    raw = json.dumps(rows, sort_keys=True, separators=(',', ':')).encode()
-    return {'sha256': hashlib.sha256(raw).hexdigest(), 'files': rows}
+# Keep the historical imports available to capture.py and callers.
+from bfoc.candidate_state import tree, initialize as initialize_candidate
 
 
 def initialize(spec, app, run, inputs=Path('/inputs')):
-    def git(*args):
-        return subprocess.check_output(['git', *args], cwd=app)
-    git('config', '--global', '--add', 'safe.directory', str(app))
-    if git('rev-parse', 'HEAD').decode().strip() != spec['base_commit']:
-        raise RuntimeError('Task image baseline commit mismatch')
-    if git('status', '--porcelain'):
-        raise RuntimeError('Task image has pre-existing changes')
-    files = read_json(inputs / 'candidate-files.json')['files']
-    for item in files:
-        p = app / item['path']
-        actual = sha256(p) if p.is_file() else None
-        if actual != item['base_sha256']:
-            raise RuntimeError('Candidate preimage mismatch: ' + item['path'])
-    git('apply', '--check', str(inputs / 'candidate.patch'))
-    git('apply', str(inputs / 'candidate.patch'))
-    for item in files:
-        p = app / item['path']
-        actual = sha256(p) if p.is_file() else None
-        if actual != item['sha256']:
-            raise RuntimeError('Candidate postimage mismatch: ' + item['path'])
-    git('config', 'user.name', 'Experiment')
-    git('config', 'user.email', 'experiment@example.invalid')
-    snapshot = tree(app)
+    snapshot = initialize_candidate(spec, app, inputs)
     write_json(run / 'initial-tree.json', snapshot)
-    (run / 'initial-status.txt').write_bytes(git('status', '--porcelain=v1', '--untracked-files=all'))
+    (run / 'initial-status.txt').write_bytes(subprocess.check_output(
+        ['git', 'status', '--porcelain=v1', '--untracked-files=all'], cwd=app))
     print('INITIAL_TREE ' + snapshot['sha256'], flush=True)
 
 

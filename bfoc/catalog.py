@@ -20,7 +20,7 @@ def seal(directory):
     return len(rows)
 
 
-def validate_task(directory, hashes=True):
+def validate_task(directory, hashes=True, pier=True):
     directory = Path(directory).resolve()
     if any(p.is_symlink() for p in directory.rglob('*')):
         raise ValueError('Task inputs must not contain symlinks')
@@ -66,6 +66,9 @@ def validate_task(directory, hashes=True):
             p = safe_child(directory, row['path'])
             if p.is_symlink() or p.stat().st_size != row['bytes'] or sha256(p) != row['sha256']:
                 raise ValueError('Task input hash changed: ' + t['id'] + '/' + row['path'])
+    if pier and 'pier' in t:
+        from .pier_dataset import validate_derived
+        validate_derived(directory, t)
     return t
 
 

